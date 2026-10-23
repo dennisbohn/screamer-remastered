@@ -34,6 +34,9 @@
 #include "port.h"
 #include "s2_port.h"
 #include "controls.h"
+#ifdef OS_GPU
+#include "gpu.h"
+#endif
 #include <setjmp.h>
 
 /* every event loop gets the game controller's buttons as keys (controls.c), and F5 -- the
@@ -371,6 +374,15 @@ static jmp_buf *g_next_part;           /* where os_go() jumps back to: the loop 
 #define SDL_RenderPresent(r)              ((void)0)
 #endif
 
+#if defined(OS_GPU) && !defined(MISTER_HYBRID)
+/* THE GPU'S WAY (gpu.c, renderer=gpu): the picture went up in show_pixels, showing it is the
+   swap, and SDL's renderer -- there is none then -- is not called */
+#define SDL_RenderClear(r)                (gpu_active() ? 0 : (SDL_RenderClear)(r))
+#define SDL_RenderCopy(r, t, a, b)        (gpu_active() ? 0 : (SDL_RenderCopy)((r), (t), (a), (b)))
+#define SDL_RenderPresent(r)              (gpu_active() ? gpu_present() : (SDL_RenderPresent)(r))
+static int renderer_gpu(void);
+#endif
+
 /* MISTER: where a picture's time goes, for the log (mister.c).  0 the game's
    own work is done, 1 sky and clearing, 2 the scene worked out, 5 and filled;
    then the rest (3). */
@@ -388,6 +400,10 @@ static SDL_Window *sys_window(SDL_Renderer **ren)
         SDL_SetHint("SDL_MISTER_VSYNC", "1");            /* MISTER: a picture is shown once a field */
         SDL_SetHint("SDL_MISTER_VIDEO_FORMAT", "INDEX8"); /* MISTER: and is the palette's numbers (fb) */
 #endif
+#ifdef OS_GPU
+        int gpu_wanted = renderer_gpu();
+        if (gpu_wanted) gpu_hints();
+#endif
         if (SDL_Init(SDL_INIT_VIDEO) != 0) { fprintf(stderr, "SDL_Init: %s\n", SDL_GetError()); return NULL; }
         /* 4:3, as 320x200 was always meant to be shown; resizable, letterboxed */
 #ifdef MISTER_HYBRID
@@ -395,8 +411,20 @@ static SDL_Window *sys_window(SDL_Renderer **ren)
            size picks the video mode) */
         win = SDL_CreateWindow("OpenScreamer", 0, 0, FB_W, FB_H, 0);
 #else
+        Uint32 flags = SDL_WINDOW_RESIZABLE;
+#ifdef OS_GPU
+        if (gpu_wanted) { gpu_attributes(); flags |= gpu_window_flags(); }
+#endif
         win = SDL_CreateWindow("OpenScreamer", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-                               960, 720, SDL_WINDOW_RESIZABLE);
+                               960, 720, flags);
+#ifdef OS_GPU
+        if (!win && gpu_wanted) {               /* no OpenGL window here: the software way */
+            fprintf(stderr, "gpu: %s -- the software way shows the pictures\n", SDL_GetError());
+            gpu_wanted = 0;
+            win = SDL_CreateWindow("OpenScreamer", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
+                                   960, 720, SDL_WINDOW_RESIZABLE);
+        }
+#endif
 #endif
 #ifdef MISTER_HYBRID
         /* MISTER: no renderer -- the picture goes straight to the window's
@@ -404,6 +432,11 @@ static SDL_Window *sys_window(SDL_Renderer **ren)
         SDL_Renderer *r = (SDL_Renderer *)win;
         if (!win) fprintf(stderr, "no picture: %s\n", SDL_GetError());
 #else
+#ifdef OS_GPU
+        /* the card shows the pictures (gpu.c); the window stands in for SDL's renderer, which the
+           calls to it pass by (the SDL_Render* above) -- or, with no OpenGL, SDL's renderer as ever */
+        if (gpu_wanted && win && gpu_open(win)) { os_slot_set(0, win); os_slot_set(1, win); if (ren) *ren = os_slot(1); return win; }
+#endif
         SDL_Renderer *r = win ? SDL_CreateRenderer(win, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC) : NULL;
         if (!r) fprintf(stderr, "no %s: %s\n", win ? "renderer" : "window", SDL_GetError());
         SDL_RendererInfo info;
@@ -428,6 +461,9 @@ static SDL_Texture *sys_texture(int w, int h)
     }
     return os_slot(0);                                  /* (there is no texture) */
 #endif
+#ifdef OS_GPU
+    if (gpu_active()) return (SDL_Texture *)os_slot(0); /* (a stand-in: the picture goes to the card, gpu_picture) */
+#endif
     SDL_Texture *tex = os_slot(2);
     int tw = 0, th = 0;
     if (tex) SDL_QueryTexture(tex, NULL, NULL, &tw, &th);
@@ -448,9 +484,24 @@ static void show_pixels(SDL_Texture *tex, const uint8_t *pixels, int rows)
     (void)tex;
     mister_show(os_slot(0), pixels, pal, FB_W, rows);
 #else
-    static uint32_t rgb[FB_MAXW * (FB_MAXH + 40)];
-    for (int i = 0; i < FB_W * rows; i++) rgb[i] = pal[pixels[i]];
-    SDL_UpdateTexture(tex, NULL, rgb, FB_W * (int)sizeof(uint32_t));
+#ifdef OS_GPU
+    if (gpu_active()) {                         /* the numbers and the palette to the card (gpu.c) */
+        gpu_picture(pixels, FB_W, rows, pal);
+        if (getenv("OS_GPUCHECK")) {            /* a test: OS_GPUCHECK=<n> pictures compared with the software way's, then the end */
+            static int n_, bad_;
+            const int differ = gpu_check(pixels, FB_W, rows, pal);
+            printf("gpu check: picture %d (%d x %d): %d pixels differ\n", ++n_, FB_W, rows, differ);
+            fflush(stdout);
+            if (differ != 0) bad_ = 1;
+            if (n_ >= atoi(getenv("OS_GPUCHECK"))) exit(bad_);
+        }
+    } else
+#endif
+    {
+        static uint32_t rgb[FB_MAXW * (FB_MAXH + 40)];
+        for (int i = 0; i < FB_W * rows; i++) rgb[i] = pal[pixels[i]];
+        SDL_UpdateTexture(tex, NULL, rgb, FB_W * (int)sizeof(uint32_t));
+    }
 #endif
     g_show_fade = 1.0f; g_show_to_k = 0.0f;
 }
@@ -464,7 +515,7 @@ static void os_go(int argc, const char *a1, const char *a2)
     longjmp(*g_next_part, 1);
 }
 
-static struct { int res, diff, laps, speech, music, starting, vol_cd, vol_fx, vol_mu, detail, game; } g_cfg = { 0, 1, 0, 1, 1, 0, 0x6000, 0x6000, 0x6000, 2, 1 };
+static struct { int res, diff, laps, speech, music, starting, vol_cd, vol_fx, vol_mu, detail, game, renderer; } g_cfg = { 0, 1, 0, 1, 1, 0, 0x6000, 0x6000, 0x6000, 2, 1, 0 };
 /* key_accelerate= ... lines: a key's name in the place of the one in the game's CONTROLS.CFG (controls.c) */
 static char g_cfg_key[6][40];
 static const char *const g_cfg_key_word[6] = { "key_accelerate", "key_brake", "key_left", "key_right", "key_gear_up", "key_gear_down" };
@@ -486,6 +537,7 @@ static void cfg_load(void)
         if (sscanf(line, "music=%d", &n) == 1) g_cfg.music = n != 0;
         if (sscanf(line, "starting_high=%d", &n) == 1) g_cfg.starting = n != 0;
         if (sscanf(line, "game=%d", &n) == 1) g_cfg.game = n == 2 ? 2 : 1;
+        if (sscanf(line, "renderer=%63s", val) == 1) g_cfg.renderer = !strcmp(val, "gpu");
         if (sscanf(line, "detail=%63s", val) == 1)
             for (int k = 0; k < 4; k++) if (!strcmp(val, g_detail_word[k])) g_cfg.detail = k;
         if (sscanf(line, "volume_cd=%d", &n) == 1) g_cfg.vol_cd = n < 0 ? 0 : n > 0x7fff ? 0x7fff : n;
@@ -511,8 +563,20 @@ static void cfg_save(void)
     for (int k = 0; k < 6; k++) if (g_cfg_key[k][0]) fprintf(f, "%s=%s\n", g_cfg_key_word[k], g_cfg_key[k]);
     if (g_cfg.starting) fprintf(f, "starting_high=1\n");
     if (g_cfg.game == 2) fprintf(f, "game=2\n");
+#ifdef OS_GPU
+    fprintf(f, "renderer=%s\n", g_cfg.renderer ? "gpu" : "software");
+#endif
     fclose(f);
 }
+
+#ifdef OS_GPU
+/* the GPU renderer (gpu.c): OS_RENDERER (-renderer) over the settings file's renderer= */
+static int renderer_gpu(void)
+{
+    const char *e = getenv("OS_RENDERER");
+    return e ? !strcmp(e, "gpu") : g_cfg.renderer;
+}
+#endif
 
 /* the name of a file of the low set, or of its twin in the high set: the L
    before the extension (MENU1L.PCX, GAMEL.FNT, IMPLET_L.PKC) becomes an H */

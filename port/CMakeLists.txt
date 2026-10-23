@@ -75,6 +75,14 @@ add_dependencies(${OS_VERSION_FOR} os_version)
 if(NOT MISTER_HYBRID)
   target_include_directories(openscreamer PRIVATE ${SDL2_INCLUDE_DIRS} ${CMAKE_CURRENT_BINARY_DIR})
 endif()
+
+# the fork's GPU renderer (src/gpu.c, docs/GPU.md): OpenGL 4.5 when renderer=gpu; its functions
+# come from SDL_GL_GetProcAddress, so nothing more is linked
+option(OS_GPU "The GPU renderer (OpenGL 4.5), chosen with renderer=gpu" ON)
+if(OS_GPU AND NOT MISTER_HYBRID)
+  target_sources(openscreamer PRIVATE src/gpu.c)
+  target_compile_definitions(openscreamer PRIVATE OS_GPU=1)
+endif()
 target_link_directories(openscreamer PRIVATE ${SDL2_LIBRARY_DIRS})
 target_link_libraries(openscreamer PRIVATE ${SDL2_LIBRARIES} m)
 if(WIN32)
