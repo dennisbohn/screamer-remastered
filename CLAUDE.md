@@ -203,7 +203,7 @@ P CD player, BACKSPACE back on the road, ESC = PLAY AGAIN?. `-d` developer mode:
 `OS_MUSIC=n`, `OS_MUSICVOL`, `OS_SFXVOL`, `OS_SFXLP`, `OS_MUSICLOG`, `OS_PADTEST`,
 `OS_REPLAYCHECK`, `OS_CYCLETEST`, `OS_LOAD_SHOT`, `OS_FRAMELOG=1` (frames a second and the port's work on one); off-switches `OS_NOCARS NOOPP NOHUD
 NOTIMER NOPROPS NOANIMS NOSOUND NOMUSIC NOSPEECH NOREPLAY NOCRASH NOLEAN NOSNAP NOTIE
-NORUMBLE`; dumps `OS_WALLCHECK HOLES TRACKMASK WHATAT HITDUMP GROUNDDUMP OPPDUMP PROPDUMP
+NORUMBLE NOBLOCKORDER`; dumps `OS_WALLCHECK HOLES TRACKMASK WHATAT HITDUMP GROUNDDUMP OPPDUMP PROPDUMP
 MODELOG TILTCHECK STACKED DOPPLERLOG INTRO_LOG`.
 
 ---
@@ -256,6 +256,8 @@ MODELOG TILTCHECK STACKED DOPPLERLOG INTRO_LOG`.
 - Moving scenery (objects with frames) is modelled Z-up; a frame is the block's whole matrix on
   (x, y, z) as stored (NOTES2 S2-5b). Check such an object from four sides, in both games.
 - Only the hub disc spins, not the tyre block. A car drawn anywhere needs a `car_pose`.
+- A car's blocks go in the engine's order -- tyres, hubs, then the body over them, whatever
+  the depth (`draw_object`, `rkb`; NOTES §18) -- not by nudging the wheels' depth.
 - Per-FRAME quantities in the game (Doppler, lean kicks, prop lift, wheel turn): the port
   assumes 30 frames/s.
 - Opponents: no smoke, no suspension, never hit props. Opponents never swap places among

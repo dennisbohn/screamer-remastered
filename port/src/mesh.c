@@ -258,6 +258,14 @@ static int mesh_fill(mesh *m, const uint8_t *buf, long len)
         m->block[bi].fbase = m->nface; m->block[bi].fcount = b;
         m->block[bi].flags = (int)rd32(buf + off + 0x18);
         m->block[bi].ox = tx; m->block[bi].oy = ty; m->block[bi].oz = tz;
+        m->block[bi].cx = (float)rd16(buf + off + 4) + tx;
+        m->block[bi].cy = (float)rd16(buf + off + 6) + ty;
+        m->block[bi].cz = (float)rd16(buf + off + 8) + tz;
+        {   /* a name of three letters ending in i (a tyre, the arches' insides) or x (a hub) */
+            const uint8_t *nm = buf + off + 0x68;
+            const int named = off + 0x6c <= len && nm[0] != 'A' && nm[0] != 'a' && nm[3] == 0;
+            m->block[bi].back = named && nm[2] == 'i' ? 4000 : named && nm[2] == 'x' ? 1000 : 0;
+        }
         long no = (long)(int32_t)rd32(buf + off + 0x20);
         m->block[bi].has_vnormal = (no > 0 && no + 4 + 12L * a <= len && (int)rd32(buf + no) == a);
         for (int i = 0; i < a; i++) {

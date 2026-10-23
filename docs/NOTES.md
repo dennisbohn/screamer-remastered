@@ -1600,12 +1600,25 @@ MONTY, JOINT, CLOCK, ABURN, INVER, MIRRO, UPDOW), CD track order.
 
 **Wheels the body covers:** AUTO06 (Bullet) has its rear tyre blocks flagged `0x201`
 instead of `0x1` — bit `0x200` is otherwise only on body blocks — and its bodywork comes
-down over them. The port gives those wheels (tyre and hub) no depth nudge.
+down over them. (The engine's order of a car's blocks, below, keeps them there.)
 (The stray purple pixels once seen round the wheels on the car screen are gone — Danik,
 2026-10-09. Closed.)
 
+**A car's blocks are painted in the engine's order** (2026-10-24; `0x8ac58` for an object,
+`0x8ad4c` → `0x8af24` for each block, the sort `0x832c0`, drawn from the front of the
+list): the furthest first by the distance from the camera to each block's middle (header
++4, three int16, turned and placed with the block) -- but a block whose name (+0x68) has
+three letters ending in `i` (the tyres, and `fai`, the arches' insides) counts 4000
+further off, one ending in `x` (the hubs) 1000, and a name starting with A/a is left alone.
+So the tyres go first, then the hubs, then the bodywork over them, whatever the depth.
+Screamer 2's program has the same code, its cars the same names. The port had nudged the
+wheels 3-4.5 % nearer instead, and the replay's high trackside cameras then saw the tyres
+through the wings. Now `draw_object` ranks a car's blocks the engine's way and sends the
+faces out the last block first, and a block keeps off the pixels the car's later blocks
+have taken (`rkb`). `OS_NOBLOCKORDER=1`: depth alone decides (a test).
+
 **A car drawn anywhere needs a `car_pose`** (even an all-zero one): `draw_object` only
-applies the wheel / wheel-arch depth nudges to objects that have one. The menu's car had
+puts the blocks of an object that has one in the engine's order. The menu's car had
 none at first and the body cut into its wheels again (Danik). `OS_MENU_TURN=<rad>` and
 `OS_MENU_ZOOM=<factor>` with `OS_MENU_SHOT` look at a car from any side, close up; F12
 in the menu saves `menu_NNN.ppm`.

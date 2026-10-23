@@ -135,6 +135,7 @@ static int   g_vh = 200;      /* rows of the screen the 3D view covers */
 static uint8_t  *fb;          /* colour: the palette's number (see show_palette) */
 static float    *zb;          /* 1/depth per pixel; bigger is nearer           */
 static int16_t  *idb;         /* which scene object owns the pixel, -1 = none  */
+static uint8_t  *rkb;         /* a car's pixel: its block's place in the engine's order (g_obj_rank) */
 static int g_tie_rule = 1;   /* OS_NOTIE=1 switches the same-depth rule off (for comparing) */
 #define MAX_OBJS 256                 /* the pool of cars, props, puffs, sparks ... (g_car) */
 static unsigned char g_obj_ground[4096 + MAX_OBJS + 8];   /* this picture: the object is a piece of the drivable track (record run 0) */
@@ -1060,7 +1061,8 @@ static int      g_obj_over;     /* the object being drawn is not hidden by the r
 static float    g_obj_ground_vy;   /* ...and the height in the view of the place it stands on (its middle) */
 static float    g_obj_eye_h;       /* ...and the camera's height over that road (over_ground) */
 static float    g_eye_h = 400.0f;  /* this picture: the camera's height over the road under it */
-static int      g_wheel_bias = 1;     /* OS_NOWHEELBIAS=1 turns it off */
+static int      g_block_order = 1;    /* OS_NOBLOCKORDER=1 turns it off (a test: depth alone decides) */
+static int      g_obj_rank = -1;      /* a car's block: its place in the engine's order (draw_object); -1 the rest */
 static int      g_flat_colour = -1;   /* >= 0: the face being drawn is one flat palette colour */
 static int      g_env_phase;    /* 0..65535: which reflection picture (routine 160) */
 /* SCREAMER 2: THE REFLECTIONS' MAP.  A library loaded with flag 4 (0x4feb4: the race's "env" of
@@ -1336,6 +1338,7 @@ typedef struct {
     float au, av, bu, bv, cu, cv;       /* texture coordinates at each */
     const material *m;
     int   id, flat, sprite, tex_phase, env_phase;
+    int   rank;                         /* g_obj_rank */
     const uint8_t *fade;
     float zbias;
     float ground_vy, eye_h;             /* sprite: g_obj_ground_vy, g_obj_eye_h */
@@ -1367,7 +1370,7 @@ static void raster_tri(const vtx *a, const vtx *b, const vtx *c,
         if (!(hi >= 0 && lo <= FB_H)) return;
     }
     j.au = a->u; j.av = a->v; j.bu = b->u; j.bv = b->v; j.cu = c->u; j.cv = c->v;
-    j.m = m; j.id = id;
+    j.m = m; j.id = id; j.rank = g_obj_rank;
     j.flat = g_flat_colour; j.sprite = g_obj_over; j.zbias = g_obj_zbias; j.fade = g_fade_row; j.ground_vy = g_obj_ground_vy; j.eye_h = g_obj_eye_h;
     j.tex_phase = g_tex_phase; j.env_phase = g_env_phase;
     raster_list(&j);
@@ -1376,7 +1379,7 @@ static void raster_tri(const vtx *a, const vtx *b, const vtx *c,
 static void raster_job(const tri_job *j, int rows, int counted)      /* rows: bit (y & 7) set = this caller fills row y */
 {
     const material *const m = j->m;
-    const int id = j->id;
+    const int id = j->id, rank = j->rank;
     (void)counted;
     const float ax = j->ax, ay = j->ay, bx = j->bx, by = j->by, cx = j->cx, cy = j->cy;
 
@@ -1504,10 +1507,13 @@ static void raster_job(const tri_job *j, int rows, int counted)      /* rows: bi
               uint8_t *const cp = fb + pi;
               depth_bits *const zp = (depth_bits *)(zb + pi);
               int16_t *const ip = idb + pi;
+              uint8_t *const rp = rkb + pi;
               for (int k_ = 0; k_ < n_; k_++, iz += diz, ui += dui, vi += dvi) {
                   union { float f; uint32_t u; } mz, tz;
                   mz.f = iz * zbias;
                   tz.u = zp[k_];
+                  /* a later block of this car is there (draw_object; idb is this picture's where a depth is) */
+                  if (rank >= 0 && tz.u && ip[k_] == id && rp[k_] > rank) continue;
                   /* (more than twice as far: depth_keep says no but for a sprite -- without reading
                      whose the pixel is, which most hidden pixels are, from memory) */
                   if (mz.u + 0x00800000u < tz.u && !sprite) continue;
@@ -1525,12 +1531,14 @@ static void raster_job(const tri_job *j, int rows, int counted)      /* rows: bi
                   cp[k_] = (uint8_t)idx;
                   zp[k_] = mz.u;
                   ip[k_] = (int16_t)id;
+                  if (rank >= 0) rp[k_] = (uint8_t)rank;
               }
               x += n_; pi += n_;
               continue;
           }
           for (int k_ = 0; k_ < n_; k_++, x++, pi++, iz += diz, ui += dui, vi += dvi) {
             int tiewon = 0;
+            if (rank >= 0 && zb[pi] > 0.0f && idb[pi] == id && rkb[pi] > rank) continue;    /* (as above) */
             {
                 /*
                  * TWO OBJECTS IN THE SAME PLACE.  The engine has no depth
@@ -1642,6 +1650,7 @@ static void raster_job(const tri_job *j, int rows, int counted)      /* rows: bi
                pillar painted over it) pass the test on a tie and overwrite. */
             zb[pi]  = iz * zbias;
             idb[pi] = (int16_t)id;
+            if (rank >= 0) rkb[pi] = (uint8_t)rank;
           }
         }
     }
@@ -2013,7 +2022,7 @@ static void emit_face(const vtx *in, float prj[][3], int nc, unsigned any, const
     if (y1 - y0 < 1.0f && iceil(y0 - 0.5f) > ifloor(y1 - 0.5f)) return;       /* between two rows */
     fade_for(in, nc);
     tri_job j;
-    j.m = m; j.id = id;
+    j.m = m; j.id = id; j.rank = g_obj_rank;
     j.flat = g_flat_colour; j.sprite = g_obj_over; j.zbias = g_obj_zbias; j.fade = g_fade_row; j.ground_vy = g_obj_ground_vy; j.eye_h = g_obj_eye_h;
     j.tex_phase = g_tex_phase; j.env_phase = g_env_phase;
     j.ax = prj[0][0]; j.ay = prj[0][1]; j.ia = prj[0][2]; j.au = in[0].u; j.av = in[0].v;
@@ -2042,12 +2051,88 @@ static scene_object g_car[MAX_CARS];
 static int          g_ncar;
 static const scene_object *g_hide;     /* not drawn: the player's car, seen from inside */
 
+/* what a block of a car goes through before it is placed: its wheel's turn, the body's lean
+   (ps: the car's sines -- body pitch, roll, wheel spin, steer, cos then sin) */
+typedef struct { int wheel, body; float bpc, bps, brc, brs, wcs, wsn, scs, ssn, wup; } block_turn;
+
+static void block_turn_of(const scene_object *so, const mesh *mm, int bi, const float ps[8], block_turn *t)
+{
+    /* a car's wheel block: turned about its own axle, the front ones
+       steered as well (0x15c0c writes these angles into the block records) */
+    const struct mesh_block *blk = &mm->block[bi];
+    const int role = (so->pose && so->pose->per_wheel && bi < 16) ? so->pose->role[bi] : -1;
+    const int wheel = role >= 0 ? (role & 0x30) != 0 : (so->pose && blk->ox != 0.0f);
+    const int body = (so->pose && !wheel && (role < 0 || role == 1) &&
+                      (so->pose->body_pitch != 0.0f || so->pose->body_roll != 0.0f ||
+                       so->pose->body_drop != 0.0f));
+    t->wheel = wheel; t->body = body;
+    t->bpc = body ? ps[0] : 1.0f; t->bps = body ? ps[1] : 0.0f;
+    t->brc = body ? ps[2] : 1.0f; t->brs = body ? ps[3] : 0.0f;
+    t->wcs = 1.0f; t->wsn = 0.0f; t->scs = 1.0f; t->ssn = 0.0f; t->wup = 0.0f;
+    if (wheel && so->pose->per_wheel) {
+        /* SCREAMER 2 (0x16878): every wheel has its own turning and its own spring */
+        const int w = role & 3;
+        if (role & 0x10) { t->wcs = cosf(so->pose->wheel_spin[w]); t->wsn = sinf(so->pose->wheel_spin[w]); }
+        if (w == 0 || w == 2) { t->scs = ps[6]; t->ssn = ps[7]; }      /* (0x16878: wheels 0 and 2 steer) */
+        t->wup = -so->pose->wheel_in[w];
+    }
+    else if (wheel) {
+        /* Only the HUB DISC turns (block flags 0x800).  The tyre block is
+           not a whole tyre: it is the lower half of the tread and the
+           inner wall, the part that shows under the bodywork -- turn it
+           and it swings up inside the body and the wheel is left a flat
+           disc with nothing behind it (Danik saw exactly that). */
+        if (blk->flags & 0x800) { t->wcs = ps[4]; t->wsn = ps[5]; }
+        if (blk->oz < 0.0f) { t->scs = ps[6]; t->ssn = ps[7]; }
+    }
+}
+
+/* a block's whole way to the view as one turn (M[0..2]) and shift (M[3]), by four points sent
+   through it, and the eye's place in the block's own frame */
+static void block_to_view(const scene_object *so, float c, float sn, const struct mesh_block *blk,
+                          const block_turn *t, float M[4][3], float eye[3])
+{
+    static const float unit[4][3] = { { 0, 0, 0 }, { 1, 0, 0 }, { 0, 1, 0 }, { 0, 0, 1 } };
+    float img[4][3];
+    for (int a = 0; a < 4; a++) {
+        vec3 lv = { unit[a][0], unit[a][1], unit[a][2] };
+        if (t->wheel) {
+            float x = lv.x - blk->ox, y = lv.y - blk->oy, z = lv.z - blk->oz;
+            float y2 = y * t->wcs - z * t->wsn, z2 = z * t->wcs + y * t->wsn;
+            lv.x = blk->ox + x * t->scs + z2 * t->ssn;
+            lv.y = blk->oy + y2 + t->wup;
+            lv.z = blk->oz + z2 * t->scs - x * t->ssn;
+        }
+        if (t->body) {
+            float y = lv.y * t->bpc - lv.z * t->bps, z = lv.z * t->bpc + lv.y * t->bps;
+            float x = lv.x * t->brc - y * t->brs;
+            lv.y = y * t->brc + lv.x * t->brs - so->pose->body_drop;
+            lv.x = x; lv.z = z;
+        }
+        float wp[3];
+        vtx o;
+        place(so, c, sn, &lv, wp);
+        to_view(wp, &o);
+        img[a][0] = o.x; img[a][1] = o.y; img[a][2] = o.z;
+    }
+    for (int a = 0; a < 3; a++) {
+        M[a][0] = img[a + 1][0] - img[0][0];
+        M[a][1] = img[a + 1][1] - img[0][1];
+        M[a][2] = img[a + 1][2] - img[0][2];
+        M[3][a] = img[0][a];
+    }
+    /* (the turn undone: its rows are at right angles) */
+    for (int a = 0; a < 3; a++)
+        eye[a] = -(M[a][0] * M[3][0] + M[a][1] * M[3][1] + M[a][2] * M[3][2]);
+}
+
 static void draw_object(const scene_object *so, int id, int pass,
                         const camera *cam)
 {
     const mesh *mm = so->m;
     g_tex_phase = (so->phase < 0) ? (g_anim_clock & 0x3fff) : (so->phase >> 2) & 0x3fff;
     g_obj_zbias = (so->zbias > 0.0f) ? so->zbias : 1.0f;
+    g_obj_rank = -1;
     g_obj_sprite = so->sprite;
     g_obj_over = so->over;
     g_env_phase = so->pose ? so->pose->env : 0;
@@ -2226,21 +2311,6 @@ static void draw_object(const scene_object *so, int id, int pass,
         return;
     }
 
-    /*
-     * WHEELS THE BODYWORK COVERS.  On AUTO06 (the Bullet) the body comes down
-     * over the rear wheels, and its two rear tyre blocks carry flag 0x200 --
-     * the bit every body block has and no other tyre does (0x201 against 0x1).
-     * Those wheels, tyre and hub, get no depth nudge: they are behind the body
-     * and must stay there (Danik saw them through it).
-     */
-    unsigned covered = 0;
-    if (so->pose)
-        for (int i = 0; i < mm->nblock; i++) {
-            if (mm->block[i].ox == 0.0f || !(mm->block[i].flags & 0x200)) continue;
-            for (int j = 0; j < mm->nblock; j++)
-                if (mm->block[j].ox * mm->block[i].ox > 0.0f &&
-                    fabsf(mm->block[j].oz - mm->block[i].oz) < 8.0f) covered |= 1u << j;
-        }
     static vtx q_seen[MESH_MAX_VERT];                 /* the quick way's corners in view space, and each block's turn and shift */
     static unsigned q_seen_at[MESH_MAX_VERT], q_block_at[32], q_stamp;
     static unsigned char q_out[MESH_MAX_VERT];
@@ -2251,15 +2321,49 @@ static void draw_object(const scene_object *so, int id, int pass,
     const float q_side = FB_W * 0.5f / g_focal_x, q_top = g_cy / g_focal_y, q_bottom = ((float)g_vh - g_cy) / g_focal_y;
     q_stamp++;
     /* a car's sines, once for all its faces */
-    float pose_bpc = 1.0f, pose_bps = 0.0f, pose_brc = 1.0f, pose_brs = 0.0f;
-    float pose_wcs = 1.0f, pose_wsn = 0.0f, pose_scs = 1.0f, pose_ssn = 0.0f;
+    float ps[8] = { 1.0f, 0.0f, 1.0f, 0.0f, 1.0f, 0.0f, 1.0f, 0.0f };
     if (so->pose) {
-        pose_bpc = cosf(so->pose->body_pitch); pose_bps = sinf(so->pose->body_pitch);
-        pose_brc = cosf(so->pose->body_roll);  pose_brs = sinf(so->pose->body_roll);
-        pose_wcs = cosf(so->pose->spin);       pose_wsn = sinf(so->pose->spin);
-        pose_scs = cosf(so->pose->steer);      pose_ssn = sinf(so->pose->steer);
+        ps[0] = cosf(so->pose->body_pitch); ps[1] = sinf(so->pose->body_pitch);
+        ps[2] = cosf(so->pose->body_roll);  ps[3] = sinf(so->pose->body_roll);
+        ps[4] = cosf(so->pose->spin);       ps[5] = sinf(so->pose->spin);
+        ps[6] = cosf(so->pose->steer);      ps[7] = sinf(so->pose->steer);
     }
-    for (int fi = 0; fi < mm->nface; fi++) {
+    /*
+     * A CAR'S BLOCKS IN THE ENGINE'S ORDER.  It paints a car block by block, the furthest first
+     * by the distance to each block's middle (0x8ac58, 0x8af24), but counts a tyre or the
+     * arches' insides (a name "..i") 4000 further off and a hub ("..x") 1000: the wheels first
+     * and the body over them, whatever the depth.  So here the faces go out the last block
+     * first, and a block keeps off the pixels the car's later ones have taken (rkb).
+     */
+    static int forder[MESH_MAX_FACE];
+    static signed char brank[32];
+    int nfo = 0;
+    const int ranked = pass == 0 && so->pose && !so->sprite && g_block_order && mm->nblock <= 32;
+    if (ranked) {
+        int ord[32];
+        float key[32];
+        for (int b = 0; b < mm->nblock; b++) {
+            const struct mesh_block *k = &mm->block[b];
+            block_turn t;
+            block_turn_of(so, mm, b, ps, &t);
+            block_to_view(so, c, sn, k, &t, q_m[b], q_eye[b]);
+            q_block_at[b] = q_stamp;
+            const float (*M)[3] = q_m[b];
+            const float x = M[3][0] + k->cx * M[0][0] + k->cy * M[1][0] + k->cz * M[2][0];
+            const float y = M[3][1] + k->cx * M[0][1] + k->cy * M[1][1] + k->cz * M[2][1];
+            const float z = M[3][2] + k->cx * M[0][2] + k->cy * M[1][2] + k->cz * M[2][2];
+            key[b] = -rintf(sqrtf(x * x + y * y + z * z)) - (float)k->back;
+            int i = b;                          /* (a tie: the lower block first, as the engine's sort) */
+            while (i > 0 && key[ord[i - 1]] > key[b]) { ord[i] = ord[i - 1]; i--; }
+            ord[i] = b;
+        }
+        for (int r = mm->nblock - 1; r >= 0; r--) {
+            brank[ord[r]] = (signed char)r;
+            for (int fi = 0; fi < mm->nface; fi++) if (mm->face_block[fi] == ord[r]) forder[nfo++] = fi;
+        }
+    }
+    for (int fo = 0; fo < (ranked ? nfo : mm->nface); fo++) {
+        const int fi = ranked ? forder[fo] : fo;
         int nc = mm->ncorner[fi];
         if (nc < 3) continue;
         int mi = mm->material[fi] / 16;
@@ -2278,50 +2382,14 @@ static void draw_object(const scene_object *so, int id, int pass,
         }
         if ((mat->type == 224) != (pass == 1)) continue;
 
-        /* a car's wheel block: turned about its own axle, the front ones
-           steered as well (0x15c0c writes these angles into the block records) */
-        const struct mesh_block *blk = &mm->block[mm->face_block[fi]];
-        const int role = (so->pose && so->pose->per_wheel && mm->face_block[fi] < 16) ? so->pose->role[mm->face_block[fi]] : -1;
-        const int wheel = role >= 0 ? (role & 0x30) != 0 : (so->pose && blk->ox != 0.0f);
-        const int body = (so->pose && !wheel && (role < 0 || role == 1) &&
-                          (so->pose->body_pitch != 0.0f || so->pose->body_roll != 0.0f ||
-                           so->pose->body_drop != 0.0f));
-        const float bpc = body ? pose_bpc : 1.0f, bps = body ? pose_bps : 0.0f;
-        const float brc = body ? pose_brc : 1.0f, brs = body ? pose_brs : 0.0f;
-        /*
-         * The game has no depth buffer: it draws an object block by block in
-         * a fixed order, so a wheel is simply painted over the bodywork it
-         * sits in.  Here the body's wheel arch can lie a few units nearer
-         * than the wheel and cut pieces out of it (Danik: "the car body draws
-         * over them"), so the wheel blocks are counted a little nearer -- the
-         * hub disc more than the tyre it sits on.  The far side's wheels are
-         * hundreds of units further off and stay hidden.
-         */
-        g_obj_zbias = (so->zbias > 0.0f) ? so->zbias : 1.0f;
-        if (wheel && g_wheel_bias && !(covered & (1u << mm->face_block[fi])))
-            g_obj_zbias = (blk->flags & 0x800) ? 1.045f : 1.03f;
-        /* ...and the other way round for the black panels inside the wheel
-           arches (a car's flat-coloured block that is not a wheel): the game
-           paints them first and the bodywork over them; they lie within a few
-           units of the body's side and must lose to it */
-        if (so->pose && !wheel && mat->type == 128 && g_wheel_bias) g_obj_zbias = 0.96f;
-        float wcs = 1.0f, wsn = 0.0f, scs = 1.0f, ssn = 0.0f, wup = 0.0f;
-        if (wheel && so->pose->per_wheel) {
-            /* SCREAMER 2 (0x16878): every wheel has its own turning and its own spring */
-            const int w = role & 3;
-            if (role & 0x10) { wcs = cosf(so->pose->wheel_spin[w]); wsn = sinf(so->pose->wheel_spin[w]); }
-            if (w == 0 || w == 2) { scs = pose_scs; ssn = pose_ssn; }      /* (0x16878: wheels 0 and 2 steer) */
-            wup = -so->pose->wheel_in[w];
-        }
-        else if (wheel) {
-            /* Only the HUB DISC turns (block flags 0x800).  The tyre block is
-               not a whole tyre: it is the lower half of the tread and the
-               inner wall, the part that shows under the bodywork -- turn it
-               and it swings up inside the body and the wheel is left a flat
-               disc with nothing behind it (Danik saw exactly that). */
-            if (blk->flags & 0x800) { wcs = pose_wcs; wsn = pose_wsn; }
-            if (blk->oz < 0.0f) { scs = pose_scs; ssn = pose_ssn; }
-        }
+        const int bi = mm->face_block[fi];
+        const struct mesh_block *blk = &mm->block[bi];
+        block_turn bt;
+        block_turn_of(so, mm, bi, ps, &bt);
+        const int wheel = bt.wheel, body = bt.body;
+        const float bpc = bt.bpc, bps = bt.bps, brc = bt.brc, brs = bt.brs;
+        const float wcs = bt.wcs, wsn = bt.wsn, scs = bt.scs, ssn = bt.ssn, wup = bt.wup;
+        g_obj_rank = ranked ? brank[bi] : -1;
 
         /*
          * QUICKLY, for every face but a reflecting one: all that happens to a
@@ -2331,42 +2399,10 @@ static void draw_object(const scene_object *so, int id, int pass,
          * it; a corner is then nine multiplications, once however many faces
          * share it, and the face is tested as the track's pieces' are.
          */
-        const int bi = mm->face_block[fi];
         const int mirror = (mat->type == 160 && blk->has_vnormal);
         if (!so->sprite && bi >= 0 && bi < 32) {
             if (q_block_at[bi] != q_stamp) {
-                static const float unit[4][3] = { { 0, 0, 0 }, { 1, 0, 0 }, { 0, 1, 0 }, { 0, 0, 1 } };
-                float img[4][3];
-                for (int a = 0; a < 4; a++) {
-                    vec3 lv = { unit[a][0], unit[a][1], unit[a][2] };
-                    if (wheel) {
-                        float x = lv.x - blk->ox, y = lv.y - blk->oy, z = lv.z - blk->oz;
-                        float y2 = y * wcs - z * wsn, z2 = z * wcs + y * wsn;
-                        lv.x = blk->ox + x * scs + z2 * ssn;
-                        lv.y = blk->oy + y2 + wup;
-                        lv.z = blk->oz + z2 * scs - x * ssn;
-                    }
-                    if (body) {
-                        float y = lv.y * bpc - lv.z * bps, z = lv.z * bpc + lv.y * bps;
-                        float x = lv.x * brc - y * brs;
-                        lv.y = y * brc + lv.x * brs - so->pose->body_drop;
-                        lv.x = x; lv.z = z;
-                    }
-                    float wp[3];
-                    vtx o;
-                    place(so, c, sn, &lv, wp);
-                    to_view(wp, &o);
-                    img[a][0] = o.x; img[a][1] = o.y; img[a][2] = o.z;
-                }
-                for (int a = 0; a < 3; a++) {
-                    q_m[bi][a][0] = img[a + 1][0] - img[0][0];
-                    q_m[bi][a][1] = img[a + 1][1] - img[0][1];
-                    q_m[bi][a][2] = img[a + 1][2] - img[0][2];
-                    q_m[bi][3][a] = img[0][a];
-                }
-                /* the eye's place in the block's own frame (the turn undone: its rows are at right angles) */
-                for (int a = 0; a < 3; a++)
-                    q_eye[bi][a] = -(q_m[bi][a][0] * q_m[bi][3][0] + q_m[bi][a][1] * q_m[bi][3][1] + q_m[bi][a][2] * q_m[bi][3][2]);
+                block_to_view(so, c, sn, blk, &bt, q_m[bi], q_eye[bi]);
                 q_block_at[bi] = q_stamp;
             }
             const float (*M)[3] = q_m[bi];
@@ -2539,6 +2575,7 @@ static void draw_object(const scene_object *so, int id, int pass,
         draw_poly(p, uv, nc, mat, id);
         g_flat_colour = -1;
     }
+    g_obj_rank = -1;
 }
 
 /* debugging overlay: the walls the car is held between (G key, OS_SHOWEDGES) */
@@ -2571,7 +2608,7 @@ static void render_scene(const camera *cam, const sky *s)
         g_eye_h = track_under(cam->x, cam->y, 1, &h) ? cam->z - h : 400.0f;
         if (g_eye_h < 60.0f) g_eye_h = 60.0f;
     }
-    g_wheel_bias = !getenv("OS_NOWHEELBIAS");
+    g_block_order = !getenv("OS_NOBLOCKORDER");
     g_tie_rule = !getenv("OS_NOTIE");
     if (getenv("OS_ANIMCLOCK"))            /* 0..1: fix the animation clock (for --shot) */
     {
@@ -8629,8 +8666,8 @@ static void menu_frame(int screen, int pick, float turn, const uint8_t *bg, mesh
         o.yaw = turn;
         o.radius = 20000.0f;
         o.phase = (livery ? 0x8000 : 0) | 0x6000;
-        /* a car is drawn as a car here too: without a pose its wheels got none
-           of the depth nudges of draw_object and the body cut into them */
+        /* a car is drawn as a car here too: without a pose its blocks are not
+           put in the engine's order (draw_object) and the body cut into its wheels */
         static car_pose still;
         if (screen == 1) o.pose = &still;
         float reach = 0.0f;
@@ -9374,7 +9411,8 @@ static int menu_run(int *track, int *car)
     fb  = malloc(sizeof *fb       * FB_MAXW * (FB_MAXH + TALL_ROWS));     /* (the biggest: the size can change as it runs) */
     zb  = malloc(sizeof(float)    * FB_MAXW * (FB_MAXH + TALL_ROWS));
     idb = malloc(sizeof(int16_t)  * FB_MAXW * (FB_MAXH + TALL_ROWS));
-    if (g_s == 2 && (!fb || !zb || !idb)) res_fail("no memory for the bigger picture");
+    rkb = malloc(FB_MAXW * (FB_MAXH + TALL_ROWS));
+    if (g_s == 2 && (!fb || !zb || !idb || !rkb)) res_fail("no memory for the bigger picture");
     static scene empty;                      /* draw_object looks at the scene's count */
     g_scene = &empty;
 
@@ -10773,7 +10811,8 @@ static int s2_menu3d(void)
     if (!fb) fb = malloc(sizeof *fb * FB_MAXW * (FB_MAXH + TALL_ROWS));
     if (!zb) zb = malloc(sizeof(float) * FB_MAXW * (FB_MAXH + TALL_ROWS));
     if (!idb) idb = malloc(sizeof(int16_t) * FB_MAXW * (FB_MAXH + TALL_ROWS));
-    if (!fb || !zb || !idb) return 0;
+    if (!rkb) rkb = malloc(FB_MAXW * (FB_MAXH + TALL_ROWS));
+    if (!fb || !zb || !idb || !rkb) return 0;
     static scene empty;                      /* (draw_object looks at the scene's count) */
     g_scene = &empty;
     SDL_Window *win = sys_window(&g_s2m_ren);
@@ -11549,7 +11588,8 @@ static int session(int argc, char **argv)
     fb  = malloc(sizeof *fb       * FB_MAXW * (FB_MAXH + TALL_ROWS));     /* (the biggest: the size can change as it runs) */
     zb  = malloc(sizeof(float)    * FB_MAXW * (FB_MAXH + TALL_ROWS));
     idb = malloc(sizeof(int16_t)  * FB_MAXW * (FB_MAXH + TALL_ROWS));
-    if (g_s == 2 && (!fb || !zb || !idb)) res_fail("no memory for the bigger picture");
+    rkb = malloc(FB_MAXW * (FB_MAXH + TALL_ROWS));
+    if (g_s == 2 && (!fb || !zb || !idb || !rkb)) res_fail("no memory for the bigger picture");
 
     /* OS_WALLCHECK=1: for every wall segment, is the track really there just
        inside it?  The collision only works if the drivable area reaches the

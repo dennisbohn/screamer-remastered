@@ -162,7 +162,10 @@ typedef struct {
        and that many (float x, y, z) unit vectors.  Only blocks that are drawn
        with reflections have them (a car's body, nose and tail). */
     vec3   *vnormal;
-    struct mesh_block { int vbase, vcount, fbase, fcount, flags, has_vnormal; float ox, oy, oz; }
+    /* cx, cy, cz: the block's middle (header +4), placed as its vertices are; back: how much
+       further off the engine counts the block when it orders a car's blocks (0x8af24) */
+    struct mesh_block { int vbase, vcount, fbase, fcount, flags, has_vnormal; float ox, oy, oz;
+                        float cx, cy, cz; int back; }
             block[MESH_MAX_PARTS];
     uint8_t *face_block;
     int     nframes;
