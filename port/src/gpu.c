@@ -4,6 +4,7 @@
  * M1: the picture (palette numbers in fb) and the shown palette go up as textures; a shader
  * fills the window 4:3 with bars, nearest pixel, as SDL_RenderSetLogicalSize(960, 720).
  * M2: the 3D scene drawn here instead of by raster_job, from the same triangle list.
+ * M3: that scene at any size (the window's), and the flat things in fb laid over it when shown.
  * OpenGL 4.5 core, its functions from SDL_GL_GetProcAddress: nothing to link; without it the
  * software way shows the pictures.  The state outlives the parts (os_slot 11, os_keep_calloc).
  */
@@ -75,6 +76,7 @@
     X(void, Uniform2i, (GLint, GLint, GLint)) \
     X(void, Uniform2f, (GLint, GLfloat, GLfloat)) \
     X(void, Uniform4f, (GLint, GLfloat, GLfloat, GLfloat, GLfloat)) \
+    X(void, Uniform4i, (GLint, GLint, GLint, GLint, GLint)) \
     X(void, GenVertexArrays, (GLsizei, GLuint *)) \
     X(void, BindVertexArray, (GLuint)) \
     X(void, VertexAttribPointer, (GLuint, GLint, GLenum, GLboolean, GLsizei, const void *)) \
@@ -84,6 +86,7 @@
     X(void, DeleteFramebuffers, (GLsizei, const GLuint *)) \
     X(void, BindFramebuffer, (GLenum, GLuint)) \
     X(void, FramebufferTexture2D, (GLenum, GLenum, GLenum, GLuint, GLint)) \
+    X(void, BlitFramebuffer, (GLint, GLint, GLint, GLint, GLint, GLint, GLint, GLint, GLbitfield, GLenum)) \
     X(GLenum, CheckFramebufferStatus, (GLenum))
 
 /* a triangle as the scene's shaders take it: raster_job's planes, worked out as there (std430) */
@@ -118,9 +121,23 @@ typedef struct {
     int    scene_ok;
     GLuint prog0, prog1, vao3, vbo, ssbo;
     long   vbo_bytes, ssbo_bytes;
-    GLint  u0_size, u1_size, u1_smg_rows, u1_tie, u1_cy, u1_focal;
+    GLint  u0_size, u1_size, u1_smg_rows, u1_tie, u1_cy, u1_focal, u1_half;
     GLuint fbo0, fbo1, t_index, t_zsw, t_id, t_depth;
     int    sw, sh;                  /* the scene targets' size */
+    /* M3: a scene drawn larger than fb -- the targets at fb's size it is read back through, the
+       backdrop's pass (fb's picture or the sky), the flat things over it as it is shown */
+    GLint  u0_factor, u1_factor;
+    GLuint fbo_lo, t_lo_index, t_lo_zsw, t_lo_id;
+    int    lo_w, lo_h;
+    GLuint prog_back, fb_tex, sky_tex;
+    GLint  ub_mode, ub_factor, ub_sky0, ub_sky1, ub_sky2;
+    int    fbt_w, fbt_h, sky_w, sky_h;
+    const uint8_t *sky_pix;
+    GLuint prog_mix, layer_tex, lut_tex;
+    GLint  um_size, um_ssize, um_area, um_flip;
+    int    layer_w, layer_h, flip;
+    int    scene_big, overlay_ok;   /* this picture: a scene drawn larger, and the flat things for it */
+    int    last_big, last_overlay;  /* the picture shown last (gpu_again) */
     GLuint mlb_buf, mlb_tex, d2_buf, d2_tex, fl_buf, fl_tex, smg_tex;
     gpu_rec *rec;                   /* by triangle, and its corners (C library memory) */
     gpu_corner *corner;
@@ -181,7 +198,8 @@ static const char *const g_scene_vertex_src =
 /* the triangle, and the texel as raster_job reads it with OS_UVRUN=1 (every pixel's place exact):
    its planes at the pixel's centre, the same sums in the same order ("precise": none run
    together).  256 = none there.  The card's depth is 1/depth x its factor x 8 (1/NEAR_Z x 8:
-   under 0.36), larger = nearer */
+   under 0.36), larger = nearer.  M3: `at` is the pixel's centre in fb's pixels (u_factor of the
+   card's to one of fb's; 1, 1 is raster_job's own) */
 #define GPU_TEXEL_SRC \
     "struct tri_rec {\n" \
     "    float ax, ay, ia, diz, dizy, ua, duz, duzy, va, dvz, dvzy;\n" \
@@ -190,12 +208,15 @@ static const char *const g_scene_vertex_src =
     "};\n" \
     "layout(std430, binding = 0) readonly buffer tri_list { tri_rec tri[]; };\n" \
     "layout(binding = 0) uniform usamplerBuffer mlb;\n" \
+    "uniform vec2 u_factor;\n" \
     "flat in int f_tri;\n" \
     "tri_rec t;\n" \
     "float iz;\n" \
+    "vec2 at;\n" \
     "uint texel() {\n" \
     "    t = tri[f_tri];\n" \
-    "    precise float fx = gl_FragCoord.x - t.ax, fy = gl_FragCoord.y - t.ay;\n" \
+    "    at = gl_FragCoord.xy / u_factor;\n" \
+    "    precise float fx = at.x - t.ax, fy = at.y - t.ay;\n" \
     "    precise float z = t.ia + fx * t.diz + fy * t.dizy;\n" \
     "    precise float uz = t.ua + fx * t.duz + fy * t.duzy, vz = t.va + fx * t.dvz + fy * t.dvzy;\n" \
     "    precise float rz = 1.0 / z;\n" \
@@ -234,7 +255,7 @@ static const char *const g_scene1_src =
     "layout(binding = 4) uniform samplerBuffer obj_d2;\n"
     "layout(binding = 5) uniform usamplerBuffer obj_flags;\n"   /* 1 carpet, 2 ground */
     "layout(binding = 6) uniform usampler2D smg;\n"
-    "uniform int u_smg_rows, u_tie;\n"
+    "uniform int u_smg_rows, u_tie, u_half;\n"
     "uniform float u_cy, u_focal;\n"
     "layout(location = 0) out uint o_index;\n"
     "bool over_ground(float mine, float there, float py, float gvy, float h) {\n"
@@ -249,7 +270,7 @@ static const char *const g_scene1_src =
     "    if (!(mine > there * 2.0)) {\n"
     "        uint fo = other >= 0 ? texelFetch(obj_flags, other).r : 0u;\n"
     "        bool co = (fo & 1u) != 0u, cm = id >= 0 && (texelFetch(obj_flags, id).r & 1u) != 0u;\n"
-    "        if ((t.kind & 8) != 0 && other >= 0 && (fo & 2u) != 0u && over_ground(mine, there, gl_FragCoord.y, t.gvy, t.eh)) {}\n"
+    "        if ((t.kind & 8) != 0 && other >= 0 && (fo & 2u) != 0u && over_ground(mine, there, at.y, t.gvy, t.eh)) {}\n"
     "        else if (mine * 2.0 < there) discard;\n"
     "        else if (u_tie != 0 && other >= 0 && cm != co && there > 0.0) {\n"
     "            if (cm ? mine < there * 2.0 : mine * 2.0 < there) discard;\n"
@@ -259,9 +280,65 @@ static const char *const g_scene1_src =
     "            if (texelFetch(obj_d2, id).r > texelFetch(obj_d2, other).r) discard;\n"
     "        } else if (mine < there) discard;\n"
     "    }\n"
-    "    if (n == 256u || n == 0u) discard;\n"
+    "    if (n == 256u || (n == 0u && u_half == 0)) discard;\n"
     "    uint under = texelFetch(t_index, p, 0).r;\n"
     "    o_index = texelFetch(smg, ivec2(int(under), min(int(n), u_smg_rows - 1)), 0).r;\n"
+    "}\n";
+
+/* M3: a scene drawn larger -- its backdrop first, at its own size: fb's picture (mode 0), the
+   sky as sky_paint lays it, at the pixel's corner in fb's pixels (1), or one colour (2) */
+static const char *const g_back_src =
+    "#version 450 core\n"
+    "layout(binding = 0) uniform usampler2D source;\n"
+    "uniform int u_mode;\n"
+    "uniform vec2 u_factor;\n"
+    "uniform vec4 u_sky0;\n"            /* off, cos and sin of the roll, picture columns to one of the backdrop's */
+    "uniform vec4 u_sky1;\n"            /* rows to one, the eye row, the backdrop's top, fb's width */
+    "uniform ivec4 u_sky2;\n"           /* the backdrop's width and height, the ground's colour, the clear one */
+    "layout(location = 0) out uint o_index;\n"
+    "layout(location = 1) out float o_zsw;\n"
+    "layout(location = 2) out int o_id;\n"
+    "void main() {\n"
+    "    vec2 at = gl_FragCoord.xy / u_factor;\n"
+    "    o_zsw = 0.0; o_id = -1;\n"
+    "    if (u_mode == 0) { o_index = texelFetch(source, ivec2(at), 0).r; return; }\n"
+    "    if (u_mode == 2) { o_index = uint(u_sky2.w); return; }\n"
+    "    float x = at.x - 0.5, y = at.y - 0.5;\n"
+    "    float cr = u_sky0.y, sr = u_sky0.z, sx = u_sky0.w, sy = u_sky1.x, cy = u_sky1.y;\n"
+    "    float ax = -u_sky1.w * 0.5 / sx, ay = (cy - y) / sy;\n"
+    "    float fu = u_sky0.x + u_sky1.w * 0.5 / sx + (ax * cr - ay * sr) + x * cr / sx;\n"
+    "    float fv = cy / sy - (ax * sr + ay * cr) - u_sky1.z - x * sr / sx;\n"
+    "    int v = int(floor(fv));\n"
+    "    if (v >= u_sky2.y) { o_index = uint(u_sky2.z); return; }\n"
+    "    int w = u_sky2.x, u = int(floor(fu)) % w;\n"
+    "    if (u < 0) u += w;\n"
+    "    o_index = texelFetch(source, ivec2(u, max(v, 0)), 0).r;\n"
+    "}\n";
+
+/* M3: the picture shown when the scene was drawn larger: per pixel of fb (the layer) its own
+   colour, or the scene's -- as drawn, or through one of the tables (fb's darkenings) */
+static const char *const g_mix_src =
+    "#version 450 core\n"
+    "layout(binding = 0) uniform usampler2D picture;\n"
+    "layout(binding = 1) uniform sampler2D palette;\n"
+    "layout(binding = 2) uniform usampler2D layer;\n"
+    "layout(binding = 3) uniform usampler2D scene;\n"     /* row 0 the picture's top, as drawn */
+    "layout(binding = 4) uniform usampler2D luts;\n"
+    "uniform ivec2 size, ssize, flip;\n"
+    "uniform vec4 area;\n"
+    "out vec4 colour;\n"
+    "void main() {\n"
+    "    vec2 at = (gl_FragCoord.xy - area.xy) / area.zw;\n"
+    "    vec2 pic = vec2(at.x, 1.0 - at.y);\n"
+    "    ivec2 p = clamp(ivec2(floor(pic * vec2(size))), ivec2(0), size - 1);\n"
+    "    uint mode = texelFetch(layer, p, 0).r, n;\n"
+    "    if (mode == 1u) n = texelFetch(picture, p, 0).r;\n"
+    "    else {\n"
+    "        vec2 q = vec2(flip.x != 0 ? 1.0 - pic.x : pic.x, flip.y != 0 ? 1.0 - pic.y : pic.y);\n"
+    "        n = texelFetch(scene, clamp(ivec2(floor(q * vec2(ssize))), ivec2(0), ssize - 1), 0).r;\n"
+    "        if (mode >= 2u) n = texelFetch(luts, ivec2(int(n), int(mode) - 2), 0).r;\n"
+    "    }\n"
+    "    colour = texelFetch(palette, ivec2(int(n), 0), 0);\n"
     "}\n";
 
 static GLuint shader(GLenum kind, const char *src)
@@ -330,6 +407,18 @@ static void buffer_fill(GLuint buf, GLuint tex, GLenum format, const void *data,
     G->BufferData(GL_TEXTURE_BUFFER, (GLsizeiptr)bytes, data, GL_DYNAMIC_DRAW);
     G->BindTexture(GL_TEXTURE_BUFFER, tex);
     G->TexBuffer(GL_TEXTURE_BUFFER, format, buf);
+}
+
+/* an R8UI texture of w x h filled from `pixels` (made again when the size changes) */
+static void bytes_up(GLuint tex, int *tw, int *th, int w, int h, const uint8_t *pixels)
+{
+    G->PixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    G->BindTexture(GL_TEXTURE_2D, tex);
+    if (w != *tw || h != *th) {
+        G->TexImage2D(GL_TEXTURE_2D, 0, GL_R8UI, w, h, 0, GL_RED_INTEGER, GL_UNSIGNED_BYTE, NULL);
+        *tw = w; *th = h;
+    }
+    G->TexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, w, h, GL_RED_INTEGER, GL_UNSIGNED_BYTE, pixels);
 }
 
 /* --------------------------------------------------------------- M0, M1 */
@@ -436,22 +525,91 @@ static void draw(int x, int y, int w, int h)
     G->DrawArrays(GL_TRIANGLES, 0, 3);
 }
 
+/* M3: the picture with the scene drawn larger under it, into the viewport x, y, w, h */
+static void draw_mixed(int x, int y, int w, int h)
+{
+    G->Viewport(x, y, w, h);
+    G->UseProgram(G->prog_mix);
+    G->Uniform2i(G->um_size, G->pic_w, G->pic_h);
+    G->Uniform2i(G->um_ssize, G->sw, G->sh);
+    G->Uniform4f(G->um_area, (float)x, (float)y, (float)w, (float)h);
+    G->Uniform2i(G->um_flip, G->flip & 1, (G->flip >> 1) & 1);
+    const GLuint tex[5] = { G->picture, G->palette, G->layer_tex, G->t_index, G->lut_tex };
+    for (int k = 0; k < 5; k++) { G->ActiveTexture(GL_TEXTURE0 + (GLenum)k); G->BindTexture(GL_TEXTURE_2D, tex[k]); }
+    G->BindVertexArray(G->vao);
+    G->DrawArrays(GL_TRIANGLES, 0, 3);
+    G->ActiveTexture(GL_TEXTURE0);
+}
+
+void gpu_overlay(const uint8_t *layer, const uint8_t *luts, int n, int flip)
+{
+    if (!gpu() || !G->scene_big || !layer) return;
+    bytes_up(G->layer_tex, &G->layer_w, &G->layer_h, G->lo_w, G->lo_h, layer);
+    static const uint8_t none[256];
+    int tw = 0, th = 0;
+    bytes_up(G->lut_tex, &tw, &th, 256, n > 0 ? n : 1, n > 0 ? luts : none);
+    G->flip = flip;
+    G->overlay_ok = 1;
+}
+
+/* a test: the next picture shown also into `path` (PPM), at the size its scene was drawn at */
+static char g_shot[512];
+void gpu_shot_next(const char *path) { snprintf(g_shot, sizeof g_shot, "%s", path); }
+
+static void shot_write(void)
+{
+    const int w = G->scene_big ? G->sw : G->pic_w, h = G->scene_big ? G->sh : G->pic_h;
+    GLuint fbo = 0;
+    const GLuint tex = texture();
+    G->TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV, NULL);
+    G->GenFramebuffers(1, &fbo);
+    G->BindFramebuffer(GL_FRAMEBUFFER, fbo);
+    G->FramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
+    uint32_t *got = malloc((size_t)w * (size_t)h * sizeof *got);
+    FILE *f = got ? fopen(g_shot, "wb") : NULL;
+    if (f && G->CheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE) {
+        if (G->scene_big && G->overlay_ok) draw_mixed(0, 0, w, h); else draw(0, 0, w, h);
+        G->PixelStorei(GL_PACK_ALIGNMENT, 4);
+        G->ReadPixels(0, 0, w, h, GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV, got);
+        fprintf(f, "P6\n%d %d\n255\n", w, h);
+        for (int y = h - 1; y >= 0; y--)              /* (the texture's row 0 is the picture's bottom) */
+            for (int x = 0; x < w; x++) {
+                const uint32_t c = got[(size_t)y * w + x];
+                const unsigned char rgb[3] = { (unsigned char)(c >> 16), (unsigned char)(c >> 8), (unsigned char)c };
+                fwrite(rgb, 1, 3, f);
+            }
+    }
+    if (f) fclose(f);
+    free(got);
+    G->BindFramebuffer(GL_FRAMEBUFFER, 0);
+    G->DeleteFramebuffers(1, &fbo);
+    G->DeleteTextures(1, &tex);
+    g_shot[0] = 0;
+}
+
+void gpu_again(void)
+{
+    if (gpu() && G->last_big && G->last_overlay) G->scene_big = G->overlay_ok = 1;
+}
+
 void gpu_present(void)
 {
     if (!gpu()) return;
-    int dw = 0, dh = 0;
+    int dw = 0, dh = 0, w = 0, h = 0;
+    if (g_shot[0]) shot_write();
     SDL_GL_GetDrawableSize(G->win, &dw, &dh);
     G->BindFramebuffer(GL_FRAMEBUFFER, 0);
     G->Viewport(0, 0, dw, dh);
     G->ClearColor(0.0f, 0.0f, 0.0f, 1.0f);
     G->Clear(GL_COLOR_BUFFER_BIT);
-    if (G->pic_w > 0 && dw > 0 && dh > 0) {
-        /* 4:3, as large as it fits, in the middle */
-        int w = dw, h = dh;
-        if ((double)dw * 3.0 > (double)dh * 4.0) w = (int)((double)dh * 4.0 / 3.0 + 0.5);
-        else h = (int)((double)dw * 3.0 / 4.0 + 0.5);
-        draw((dw - w) / 2, (dh - h) / 2, w, h);
+    gpu_area(&w, &h);                   /* 4:3, as large as it fits, in the middle */
+    if (G->pic_w > 0 && w > 0 && h > 0) {
+        if (G->scene_big && G->overlay_ok && G->pic_w == G->layer_w && G->pic_h == G->layer_h)
+            draw_mixed((dw - w) / 2, (dh - h) / 2, w, h);
+        else draw((dw - w) / 2, (dh - h) / 2, w, h);
     }
+    G->last_big = G->scene_big; G->last_overlay = G->overlay_ok;
+    G->scene_big = G->overlay_ok = 0;
     SDL_GL_SwapWindow(G->win);
 }
 
@@ -495,10 +653,29 @@ static void scene_open(void)
     G->prog0 = program(g_scene_vertex_src, g_scene0_src);
     G->prog1 = G->prog0 ? program(g_scene_vertex_src, g_scene1_src) : 0;
     if (!G->prog0 || !G->prog1) return;
+    G->prog_back = program(g_vertex_src, g_back_src);
+    G->prog_mix = program(g_vertex_src, g_mix_src);
+    if (!G->prog_back || !G->prog_mix) return;
+    G->ub_mode = G->GetUniformLocation(G->prog_back, "u_mode");
+    G->ub_factor = G->GetUniformLocation(G->prog_back, "u_factor");
+    G->ub_sky0 = G->GetUniformLocation(G->prog_back, "u_sky0");
+    G->ub_sky1 = G->GetUniformLocation(G->prog_back, "u_sky1");
+    G->ub_sky2 = G->GetUniformLocation(G->prog_back, "u_sky2");
+    G->um_size = G->GetUniformLocation(G->prog_mix, "size");
+    G->um_ssize = G->GetUniformLocation(G->prog_mix, "ssize");
+    G->um_area = G->GetUniformLocation(G->prog_mix, "area");
+    G->um_flip = G->GetUniformLocation(G->prog_mix, "flip");
+    G->fb_tex = texture();
+    G->sky_tex = texture();
+    G->layer_tex = texture();
+    G->lut_tex = texture();
     G->u0_size = G->GetUniformLocation(G->prog0, "u_size");
     G->u1_size = G->GetUniformLocation(G->prog1, "u_size");
+    G->u0_factor = G->GetUniformLocation(G->prog0, "u_factor");
+    G->u1_factor = G->GetUniformLocation(G->prog1, "u_factor");
     G->u1_smg_rows = G->GetUniformLocation(G->prog1, "u_smg_rows");
     G->u1_tie = G->GetUniformLocation(G->prog1, "u_tie");
+    G->u1_half = G->GetUniformLocation(G->prog1, "u_half");
     G->u1_cy = G->GetUniformLocation(G->prog1, "u_cy");
     G->u1_focal = G->GetUniformLocation(G->prog1, "u_focal");
     G->GenVertexArrays(1, &G->vao3);
@@ -563,6 +740,41 @@ static void scene_targets(int w, int h)
     G->sw = w; G->sh = h;
 }
 
+/* M3: fb's size, for a scene drawn larger to be read back through (each pixel as it is at the
+   middle of fb's) */
+static void scene_targets_lo(int w, int h)
+{
+    if (w == G->lo_w && h == G->lo_h) return;
+    if (G->fbo_lo) {
+        const GLuint t[3] = { G->t_lo_index, G->t_lo_zsw, G->t_lo_id };
+        G->DeleteTextures(3, t);
+        G->DeleteFramebuffers(1, &G->fbo_lo);
+    }
+    G->t_lo_index = texture();
+    G->TexImage2D(GL_TEXTURE_2D, 0, GL_R8UI, w, h, 0, GL_RED_INTEGER, GL_UNSIGNED_BYTE, NULL);
+    G->t_lo_zsw = texture();
+    G->TexImage2D(GL_TEXTURE_2D, 0, GL_R32F, w, h, 0, GL_RED, GL_FLOAT, NULL);
+    G->t_lo_id = texture();
+    G->TexImage2D(GL_TEXTURE_2D, 0, GL_R16I, w, h, 0, GL_RED_INTEGER, GL_SHORT, NULL);
+    G->GenFramebuffers(1, &G->fbo_lo);
+    G->BindFramebuffer(GL_FRAMEBUFFER, G->fbo_lo);
+    G->FramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, G->t_lo_index, 0);
+    G->FramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, G->t_lo_zsw, 0);
+    G->FramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT2, GL_TEXTURE_2D, G->t_lo_id, 0);
+    if (G->CheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) fprintf(stderr, "gpu: the read-back targets are not complete\n");
+    G->BindFramebuffer(GL_FRAMEBUFFER, 0);
+    G->lo_w = w; G->lo_h = h;
+}
+
+void gpu_area(int *w, int *h)
+{
+    int dw = 0, dh = 0;
+    if (gpu()) SDL_GL_GetDrawableSize(G->win, &dw, &dh);
+    if ((double)dw * 3.0 > (double)dh * 4.0) dw = (int)((double)dh * 4.0 / 3.0 + 0.5);
+    else dh = (int)((double)dw * 3.0 / 4.0 + 0.5);
+    *w = dw; *h = dh;
+}
+
 /* depth_keep's rules for the solid faces, as factors on the card's depth: a carpet counts as
    twice as far; on a tie the object nearer the camera wins (a hair's nudge by distance) */
 static const float *g_rank_d2;
@@ -604,11 +816,98 @@ static void scene_factors(const gpu_view *v, const gpu_tri *t, int n)
     free(ids);
 }
 
+/* pass 0 over records a..b: the solid faces, in order; later ones win ties (raster_job:
+   !(mine < there)).  A car's blocks come the last in the engine's order first, and the stencil
+   keeps each from the pixels of the ones before it: raster_job's rkb */
+static void draw_solid(int a, int b, int w, int h, int rw, int rows, float fx, float fy)
+{
+    G->BindFramebuffer(GL_FRAMEBUFFER, G->fbo0);
+    G->DepthMask(GL_TRUE);
+    G->Scissor(0, 0, rw, rows);
+    G->Enable(GL_SCISSOR_TEST);
+    G->Enable(GL_DEPTH_TEST);
+    G->DepthFunc(GL_GEQUAL);
+    G->StencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
+    G->BindVertexArray(G->vao3);
+    G->ActiveTexture(GL_TEXTURE0);
+    G->BindTexture(GL_TEXTURE_BUFFER, G->mlb_tex);
+    G->UseProgram(G->prog0);
+    G->Uniform2f(G->u0_size, (float)w, (float)h);
+    G->Uniform2f(G->u0_factor, fx, fy);
+    for (int i = a, car = -1; i < b; ) {
+        const int rank = G->rec[i].rank, id = G->rec[i].id;
+        int j = i + 1;
+        while (j < b && G->rec[j].rank == rank && G->rec[j].id == id) j++;
+        if (rank < 0) { G->Disable(GL_STENCIL_TEST); car = -1; }
+        else {
+            if (id != car) { const GLint none_yet = 0; G->ClearBufferiv(GL_STENCIL, 0, &none_yet); car = id; }
+            G->Enable(GL_STENCIL_TEST);
+            G->StencilFunc(GL_GEQUAL, rank + 1, 0xff);
+        }
+        G->DrawArrays(GL_TRIANGLES, i * 3, (j - i) * 3);
+        i = j;
+    }
+    G->Disable(GL_STENCIL_TEST);
+    G->TextureBarrier();
+}
+
+/* pass 1 over records a..b: routine 224, reading what is there -- triangles that overlap are
+   drawn one after another, with a barrier between */
+static void draw_glass(const gpu_view *v, int a, int b, float fx, float fy)
+{
+    G->Disable(GL_DEPTH_TEST);
+    G->DepthMask(GL_FALSE);
+    G->BindFramebuffer(GL_FRAMEBUFFER, G->fbo1);
+    G->BindVertexArray(G->vao3);
+    G->UseProgram(G->prog1);
+    G->Uniform2f(G->u1_size, (float)v->w, (float)v->h);
+    G->Uniform2f(G->u1_factor, fx, fy);
+    G->Uniform1i(G->u1_smg_rows, v->smg_rows);
+    G->Uniform1i(G->u1_tie, v->tie_rule);
+    G->Uniform1i(G->u1_half, v->smg_half);
+    G->Uniform1f(G->u1_cy, v->cy);
+    G->Uniform1f(G->u1_focal, v->focal_y);
+    G->ActiveTexture(GL_TEXTURE0); G->BindTexture(GL_TEXTURE_BUFFER, G->mlb_tex);
+    const GLuint tex2d[3] = { G->t_index, G->t_zsw, G->t_id };
+    for (int k = 0; k < 3; k++) { G->ActiveTexture(GL_TEXTURE1 + k); G->BindTexture(GL_TEXTURE_2D, tex2d[k]); }
+    G->ActiveTexture(GL_TEXTURE4); G->BindTexture(GL_TEXTURE_BUFFER, G->d2_tex);
+    G->ActiveTexture(GL_TEXTURE5); G->BindTexture(GL_TEXTURE_BUFFER, G->fl_tex);
+    G->ActiveTexture(GL_TEXTURE6); G->BindTexture(GL_TEXTURE_2D, G->smg_tex);
+    float box[64][4];
+    int nbox = 0, from = a;
+    for (int i = a; i <= b; i++) {
+        int clash = i == b || nbox == 64;
+        float r[4] = { 0, 0, 0, 0 };
+        if (i < b) {
+            const gpu_corner *c = &G->corner[(size_t)i * 3];
+            r[0] = r[2] = c[0].x; r[1] = r[3] = c[0].y;
+            for (int k = 1; k < 3; k++) {
+                if (c[k].x < r[0]) r[0] = c[k].x;
+                if (c[k].x > r[2]) r[2] = c[k].x;
+                if (c[k].y < r[1]) r[1] = c[k].y;
+                if (c[k].y > r[3]) r[3] = c[k].y;
+            }
+            for (int j = 0; j < nbox && !clash; j++)
+                if (r[0] <= box[j][2] + 1 && r[2] + 1 >= box[j][0] && r[1] <= box[j][3] + 1 && r[3] + 1 >= box[j][1]) clash = 1;
+        }
+        if (clash && i > from) {
+            G->DrawArrays(GL_TRIANGLES, from * 3, (i - from) * 3);
+            G->TextureBarrier();
+            from = i; nbox = 0;
+        }
+        if (i < b) memcpy(box[nbox++], r, sizeof r);
+    }
+    G->ActiveTexture(GL_TEXTURE0);
+}
+
 void gpu_scene(const gpu_view *v, const gpu_tri *t, int n, uint8_t *fb, float *zb, int16_t *idb)
 {
     if (!gpu() || !G->scene_ok) return;
     const int w = v->w, h = v->h;
-    scene_targets(w, h);
+    const int rw = v->rw > 0 ? v->rw : w, rh = v->rh > 0 ? v->rh : h, big = rw != w || rh != h;
+    const float fx = (float)rw / (float)w, fy = (float)rh / (float)h;
+    scene_targets(rw, rh);
+    if (big) scene_targets_lo(w, h);
     scene_factors(v, t, n);
 
     /* the triangles, with raster_job's planes worked out as there (the same sums in the same
@@ -622,17 +921,12 @@ void gpu_scene(const gpu_view *v, const gpu_tri *t, int n, uint8_t *fb, float *z
         if (!r || !p) return;
         G->rec_cap = cap;
     }
-    int m = 0, glass_from = -1;
+    int m = 0;
     for (int i = 0; i < n; i++) {
         const gpu_tri *q = &t[i];
         const float ax = q->x[0], ay = q->y[0], bx = q->x[1], by = q->y[1], cx = q->x[2], cy = q->y[2];
         const float area = (bx - ax) * (cy - ay) - (cx - ax) * (by - ay);
         if (fabsf(area) < 1e-6f) continue;
-        if (q->kind & GPU_GLASS) { if (glass_from < 0) glass_from = m; }
-        else if (glass_from >= 0) {                     /* (render_scene lists all solid faces first) */
-            static int told;
-            if (!told++) fprintf(stderr, "gpu: a solid face after a see-through one: drawn out of order\n");
-        }
         if ((q->kind & (GPU_SPRITE | GPU_GLASS)) == GPU_SPRITE) {
             static int told;
             if (!told++) fprintf(stderr, "gpu: a solid face of a puff: drawn without over_ground\n");
@@ -663,7 +957,6 @@ void gpu_scene(const gpu_view *v, const gpu_tri *t, int n, uint8_t *fb, float *z
         c[0].tri = c[1].tri = c[2].tri = m;
         m++;
     }
-    if (glass_from < 0) glass_from = m;
     /* (each a fresh store: the last picture's may still be read) */
     const long vbytes = (long)m * 3 * (long)sizeof(gpu_corner), rbytes = (long)m * (long)sizeof(gpu_rec);
     if (vbytes > G->vbo_bytes) G->vbo_bytes = vbytes;
@@ -681,11 +974,14 @@ void gpu_scene(const gpu_view *v, const gpu_tri *t, int n, uint8_t *fb, float *z
     buffer_fill(G->fl_buf, G->fl_tex, GL_R8UI, G->flags, v->nobj);
     G->PixelStorei(GL_UNPACK_ALIGNMENT, 1);
     G->BindTexture(GL_TEXTURE_2D, G->smg_tex);
-    G->TexImage2D(GL_TEXTURE_2D, 0, GL_R8UI, 256, v->smg_rows, 0, GL_RED_INTEGER, GL_UNSIGNED_BYTE, v->smg);
+    if (v->smg && v->smg_rows > 0)
+        G->TexImage2D(GL_TEXTURE_2D, 0, GL_R8UI, 256, v->smg_rows, 0, GL_RED_INTEGER, GL_UNSIGNED_BYTE, v->smg);
 
     /* the backdrop, and nothing in front of it yet */
-    G->BindTexture(GL_TEXTURE_2D, G->t_index);
-    G->TexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, w, h, GL_RED_INTEGER, GL_UNSIGNED_BYTE, fb);
+    if (!big) {
+        G->BindTexture(GL_TEXTURE_2D, G->t_index);
+        G->TexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, w, h, GL_RED_INTEGER, GL_UNSIGNED_BYTE, fb);
+    }
     G->BindFramebuffer(GL_FRAMEBUFFER, G->fbo0);
     const GLfloat zero = 0.0f;
     const GLint none = -1;
@@ -693,85 +989,66 @@ void gpu_scene(const gpu_view *v, const gpu_tri *t, int n, uint8_t *fb, float *z
     G->ClearBufferfv(GL_COLOR, 1, &zero);
     G->ClearBufferiv(GL_COLOR, 2, &none);
     G->ClearBufferfv(GL_DEPTH, 0, &zero);
-
-    /* pass 0: the solid faces, in order; later ones win ties (raster_job: !(mine < there)).  A
-       car's blocks come the last in the engine's order first, and the stencil keeps each from
-       the pixels of the ones before it: raster_job's rkb */
-    G->Viewport(0, 0, w, h);
-    G->Scissor(0, 0, w, v->rows);
-    G->Enable(GL_SCISSOR_TEST);
-    G->Enable(GL_DEPTH_TEST);
-    G->DepthFunc(GL_GEQUAL);
-    G->StencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
-    G->BindVertexArray(G->vao3);
-    G->ActiveTexture(GL_TEXTURE0);
-    G->BindTexture(GL_TEXTURE_BUFFER, G->mlb_tex);
-    G->UseProgram(G->prog0);
-    G->Uniform2f(G->u0_size, (float)w, (float)h);
-    for (int i = 0, car = -1; i < glass_from; ) {
-        const int rank = G->rec[i].rank, id = G->rec[i].id;
-        int j = i + 1;
-        while (j < glass_from && G->rec[j].rank == rank && G->rec[j].id == id) j++;
-        if (rank < 0) { G->Disable(GL_STENCIL_TEST); car = -1; }
-        else {
-            if (id != car) { const GLint none_yet = 0; G->ClearBufferiv(GL_STENCIL, 0, &none_yet); car = id; }
-            G->Enable(GL_STENCIL_TEST);
-            G->StencilFunc(GL_GEQUAL, rank + 1, 0xff);
+    const int rows = big ? (int)((float)v->rows * fy + 0.5f) : v->rows;
+    G->Viewport(0, 0, rw, rh);
+    if (big) {
+        /* M3: fb's picture made larger, then the sky over the scene's rows at the card's size */
+        bytes_up(G->fb_tex, &G->fbt_w, &G->fbt_h, w, h, fb);
+        G->Disable(GL_DEPTH_TEST);
+        G->Disable(GL_SCISSOR_TEST);
+        G->UseProgram(G->prog_back);
+        G->Uniform2f(G->ub_factor, fx, fy);
+        G->Uniform1i(G->ub_mode, 0);
+        G->ActiveTexture(GL_TEXTURE0);
+        G->BindTexture(GL_TEXTURE_2D, G->fb_tex);
+        G->BindVertexArray(G->vao);
+        G->DrawArrays(GL_TRIANGLES, 0, 3);
+        const gpu_sky *s = v->sky;
+        if (s) {
+            if (s->pix && (s->pix != G->sky_pix || s->w != G->sky_w || s->h != G->sky_h)) {
+                int tw = 0, th = 0;
+                bytes_up(G->sky_tex, &tw, &th, s->w, s->h, s->pix);
+                G->sky_pix = s->pix; G->sky_w = s->w; G->sky_h = s->h;
+            }
+            G->Enable(GL_SCISSOR_TEST);
+            G->Scissor(0, 0, rw, rows);
+            G->Uniform1i(G->ub_mode, s->pix ? 1 : 2);
+            G->Uniform4f(G->ub_sky0, s->off, s->cr, s->sr, s->sx);
+            G->Uniform4f(G->ub_sky1, s->sy, s->cy, s->top, (float)w);
+            G->Uniform4i(G->ub_sky2, s->w, s->h, s->ground, s->clear);
+            G->BindTexture(GL_TEXTURE_2D, G->sky_tex);
+            G->DrawArrays(GL_TRIANGLES, 0, 3);
         }
-        G->DrawArrays(GL_TRIANGLES, i * 3, (j - i) * 3);
+    }
+
+    /* the runs of solid and see-through faces in the list's order (a race: all solid ones first,
+       render_scene's two passes; the menu: an object's own after each other) */
+    for (int i = 0; i < m; ) {
+        const int glass = (G->rec[i].kind & GPU_GLASS) != 0;
+        int j = i + 1;
+        while (j < m && ((G->rec[j].kind & GPU_GLASS) != 0) == glass) j++;
+        if (glass) draw_glass(v, i, j, fx, fy);
+        else draw_solid(i, j, w, h, rw, rows, fx, fy);
         i = j;
     }
-    G->Disable(GL_STENCIL_TEST);
-    G->TextureBarrier();
 
-    /* pass 1: routine 224, reading what is there -- triangles that overlap are drawn one after
-       another, with a barrier between */
-    if (glass_from < m) {
-        G->Disable(GL_DEPTH_TEST);
-        G->DepthMask(GL_FALSE);
-        G->BindFramebuffer(GL_FRAMEBUFFER, G->fbo1);
-        G->UseProgram(G->prog1);
-        G->Uniform2f(G->u1_size, (float)w, (float)h);
-        G->Uniform1i(G->u1_smg_rows, v->smg_rows);
-        G->Uniform1i(G->u1_tie, v->tie_rule);
-        G->Uniform1f(G->u1_cy, v->cy);
-        G->Uniform1f(G->u1_focal, v->focal_y);
-        const GLuint tex2d[3] = { G->t_index, G->t_zsw, G->t_id };
-        for (int k = 0; k < 3; k++) { G->ActiveTexture(GL_TEXTURE1 + k); G->BindTexture(GL_TEXTURE_2D, tex2d[k]); }
-        G->ActiveTexture(GL_TEXTURE4); G->BindTexture(GL_TEXTURE_BUFFER, G->d2_tex);
-        G->ActiveTexture(GL_TEXTURE5); G->BindTexture(GL_TEXTURE_BUFFER, G->fl_tex);
-        G->ActiveTexture(GL_TEXTURE6); G->BindTexture(GL_TEXTURE_2D, G->smg_tex);
-        float box[64][4];
-        int nbox = 0, from = glass_from;
-        for (int i = glass_from; i <= m; i++) {
-            int clash = i == m || nbox == 64;
-            float b[4] = { 0, 0, 0, 0 };
-            if (i < m) {
-                const gpu_corner *c = &G->corner[(size_t)i * 3];
-                b[0] = b[2] = c[0].x; b[1] = b[3] = c[0].y;
-                for (int k = 1; k < 3; k++) {
-                    if (c[k].x < b[0]) b[0] = c[k].x;
-                    if (c[k].x > b[2]) b[2] = c[k].x;
-                    if (c[k].y < b[1]) b[1] = c[k].y;
-                    if (c[k].y > b[3]) b[3] = c[k].y;
-                }
-                for (int j = 0; j < nbox && !clash; j++)
-                    if (b[0] <= box[j][2] + 1 && b[2] + 1 >= box[j][0] && b[1] <= box[j][3] + 1 && b[3] + 1 >= box[j][1]) clash = 1;
-            }
-            if (clash && i > from) {
-                G->DrawArrays(GL_TRIANGLES, from * 3, (i - from) * 3);
-                G->TextureBarrier();
-                from = i; nbox = 0;
-            }
-            if (i < m) memcpy(box[nbox++], b, sizeof b);
-        }
-    }
-
-    /* back to fb, zb and idb */
+    /* back to fb, zb and idb (a scene drawn larger: through targets of fb's size, each pixel
+       as it is at the middle of fb's) */
     G->Disable(GL_SCISSOR_TEST);
     G->Disable(GL_DEPTH_TEST);
     G->DepthMask(GL_TRUE);
     G->BindFramebuffer(GL_FRAMEBUFFER, G->fbo0);
+    if (big) {
+        G->BindFramebuffer(GL_DRAW_FRAMEBUFFER, G->fbo_lo);
+        for (int k = 0; k < 3; k++) {
+            const GLenum at = GL_COLOR_ATTACHMENT0 + (GLenum)k, at3[3] = { k == 0 ? at : GL_NONE, k == 1 ? at : GL_NONE, k == 2 ? at : GL_NONE };
+            G->ReadBuffer(at);
+            G->DrawBuffers(3, at3);
+            G->BlitFramebuffer(0, 0, rw, rh, 0, 0, w, h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+        }
+        G->BindFramebuffer(GL_FRAMEBUFFER, G->fbo_lo);
+    }
+    G->scene_big = big;
     G->PixelStorei(GL_PACK_ALIGNMENT, 1);
     G->ReadBuffer(GL_COLOR_ATTACHMENT0);
     G->ReadPixels(0, 0, w, h, GL_RED_INTEGER, GL_UNSIGNED_BYTE, fb);
@@ -793,7 +1070,7 @@ void gpu_scene(const gpu_view *v, const gpu_tri *t, int n, uint8_t *fb, float *z
     scenes++;
     if (getenv("OS_GPUPUFFS")) {
         int puffs = 0;
-        for (int i = glass_from; i < m; i++) puffs += (G->rec[i].kind & GPU_SPRITE) != 0;
+        for (int i = 0; i < m; i++) puffs += (G->rec[i].kind & (GPU_SPRITE | GPU_GLASS)) == (GPU_SPRITE | GPU_GLASS);
         if (puffs) printf("gpu scene %d: %d triangles of puffs\n", scenes, puffs);
     }
     if (getenv("OS_GPUPIXEL") && sscanf(getenv("OS_GPUPIXEL"), "%d,%d,%d", &px, &py, &at) == 3 && at == scenes &&

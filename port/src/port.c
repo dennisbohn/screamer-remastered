@@ -458,9 +458,10 @@ static void os_help(const char *me)
 "  -game N        1 = Screamer, 2 = Screamer 2.  Default: the one whose files are found\n"
 "                 (./screamer, ./screamer2); both found: a first page chooses (the last\n"
 "                 choice lit); -data DIR names either game's folder\n"
-"  -res low|high  320 x 200 or 640 x 400 for this run (Screamer 2's high is STARTH.EXE's);\n"
-"                 the one kept is RESOLUTION in Screamer's OPTIONS or Screamer 2's GAME\n"
-"                 SETTINGS, in openscreamer.cfg\n"
+"  -res vga|svga|native  320 x 200 or 640 x 400 for this run (also low|high; Screamer 2's high\n"
+"                 is STARTH.EXE's), or native: the graphics card draws Screamer's races at the\n"
+"                 window's size; the one kept is RES in Screamer's OPTIONS / GRAPHICS or\n"
+"                 RESOLUTION in Screamer 2's GAME SETTINGS, in openscreamer.cfg\n"
 #ifdef OS_GPU
 "  -renderer gpu|software  who draws the pictures this run: the graphics card (the default,\n"
 "                 if it has OpenGL 4.5) or the program itself (renderer= in openscreamer.cfg;\n"
@@ -514,7 +515,7 @@ static void os_help(const char *me)
 "  track_09.ogg -- .mp3 or .wav do as well.  Track 2 is the menu's; the races' are 3 to 9.\n"
 "\n"
 "SWITCHES FOR ONE RUN (environment variables)\n"
-"  OS_RES=low|high    OS_DETAIL=0..3    OS_LAPS=n    OS_DIFF=0..3    OS_CAR=n\n"
+"  OS_RES=low|high|native    OS_DETAIL=0..3    OS_LAPS=n    OS_DIFF=0..3    OS_CAR=n\n"
 "  OS_MODE=cones|slalom|attack    OS_NOINTRO=1    OS_NOMUSIC=1    OS_NOSOUND=1\n"
 "  OS_S2PLAINMENU=1   Screamer 2 with the port's plain menu instead of the game's own\n",
         me, me, me, me);
@@ -594,7 +595,11 @@ void os_init(int argc, char **argv)
         else if (!strcmp(argv[i], "-data") && i + 1 < argc) data = argv[++i];
         else if (!strcmp(argv[i], "-home") && i + 1 < argc) home = argv[++i];
         else if (!strcmp(argv[i], "-game") && i + 1 < argc) game = atoi(argv[++i]);
-        else if (!strcmp(argv[i], "-res") && i + 1 < argc) { i++; if (!strcmp(argv[i], "high") || !strcmp(argv[i], "low")) setenv("OS_RES", argv[i], 1); }
+        else if (!strcmp(argv[i], "-res") && i + 1 < argc) {
+            i++;
+            const char *r = !strcmp(argv[i], "vga") ? "low" : !strcmp(argv[i], "svga") ? "high" : argv[i];
+            if (!strcmp(r, "high") || !strcmp(r, "low") || !strcmp(r, "native")) setenv("OS_RES", r, 1);
+        }
         else if (!strcmp(argv[i], "-renderer") && i + 1 < argc) { i++; if (!strcmp(argv[i], "gpu") || !strcmp(argv[i], "software")) setenv("OS_RENDERER", argv[i], 1); }
         else K->argv[K->argc++] = argv[i];
     }

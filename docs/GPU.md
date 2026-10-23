@@ -2,7 +2,8 @@
 
 OpenGL 4.5 via SDL2, in `port/src/gpu.c`. Built when `OS_GPU` is on, which is the CMake default
 everywhere except the MiSTer build, and then it is what draws: the menus' pictures are shown
-through the card, a race's 3D scene is drawn on it.
+through the card, a race's 3D scene is drawn on it -- at the window's own size (RES NATIVE),
+and so is the menu's 3D.
 
 The software renderer is the fall-back, nothing to choose in the menus:
 
@@ -20,15 +21,55 @@ The software renderer is the fall-back, nothing to choose in the menus:
 | M0 | build option, `renderer=` switch, fall-back to software | done |
 | M1 | the picture through the GPU: `fb` (palette numbers) and the shown palette as textures, one shader scales 4:3 with bars, nearest pixel; vsync; DPI-aware window | done |
 | M2 | the 3D scene on the GPU at the original resolution: `tri_job` list, materials 16/64/128/160/224, depth rules; A/B tool against the software renderer | done |
-| M5 | draw distance (far plane, keep range, animations started as far as is drawn) | next |
-| M3 / M4 | screen resolution up to 4K, 16:9; texture filtering, to be switched on and off | later |
+| M3 | the scene at the window's size (RES NATIVE, up to 4K), the menu's 3D too; GRAPHICS page (RES, DISPLAY, DETAIL) | first step done |
+| M3 | texture filtering, to be switched on and off (a true-colour scene); MSAA later | next |
+| M4 | 16:9 and wider | later |
+| M5 | draw distance (far plane, keep range, animations started as far as is drawn) | put back: ULTRA is enough for now |
 | M6 | interpolation between the 50 Hz physics steps | later |
+
+## The picture's size (M3)
+
+OPTIONS has one line GRAPHICS in the place of DETAIL and RESOLUTION; its page has three:
+
+- **RES NATIVE** (the default): the card draws the scene at the size of the window's 4:3 part,
+  in its own pixels (a 4K screen in full: 2880 x 2160). **RES VGA** and **RES SVGA**: the
+  original's two, 320 x 200 and 640 x 400, for its look -- exactly as before, pixel for pixel.
+  NATIVE and SVGA use the high set's flat artwork, VGA the low set's (a change to or from VGA
+  starts the menu again, as the resolution line did). `resolution=native|svga|vga` in
+  `openscreamer.cfg` (the old `low` is VGA, `high` NATIVE); `-res native|svga|vga`.
+- **WINDOW / FULLSCREEN**: the whole screen as the desktop has it, never another screen mode,
+  so that no setting can leave the screen black; F11 the same. `display=window|fullscreen`.
+- **DETAIL**: the game's (and ULTRA), as before.
+
+Every change shows at once. How a larger scene is drawn:
+
+- **The CPU's work stays at fb's size.** The triangles and their planes are worked out in fb's
+  pixels as for M2; the fragment shaders take the pixel's middle in fb's units
+  (`gl_FragCoord / u_factor`, 1 at fb's size). Only `emit_face`'s test for faces that hit no
+  pixel's middle counts the card's pixels (`g_cull_fx`, `g_cull_fy`), or small far things
+  would be missing.
+- **The backdrop**: fb's picture made larger (the menu's background), then the sky drawn by a
+  shader with `sky_paint`'s numbers at each of the card's pixels.
+- **fb gets the scene back at its own size**: targets of fb's size, each pixel as the scene is
+  at the middle of fb's (a blit, nearest), so that the HUD and everything else works on fb as
+  ever.
+- **The flat things over it** (`lay_begin`, `lay_dark`, `lay_end` in main.c): where fb still
+  shows the scene after the HUD is drawn, the card shows its own; where fb shows the scene
+  through a darkening (the radar's window, the dialog, the CD player), the card's scene goes
+  through the same table (`gpu_overlay`: per pixel 0 the scene, 1 fb's colour, 2 + k table k).
+  The mirror cheats turn the card's scene over as well.
+- **The menu's 3D** (`menu3d_begin`, `menu3d_end`): the letters' cubes and the models, on the
+  card when the scene is drawn larger. Its see-through material has no `SMG`: the card gets
+  `raster_job`'s half and half as a table. A screen being left stands still at its last
+  picture, the card's too (`gpu_again`). A list's solid and see-through faces are drawn in
+  runs in its own order (a race: all solid ones first).
 
 ## How the scene is drawn (M2)
 
 - **The same triangles.** `raster_list` hands every triangle of a scene to `gpu_list` instead of
   the filling threads, with what `raster_job` would work out for it: the texture frame, the
-  material's kind, the depth factor. The menus' 3D stays with the software renderer.
+  material's kind, the depth factor. The menus' 3D stays with the software renderer at fb's own
+  size (larger: M3).
 - **The same sums.** For each triangle the CPU works out `raster_job`'s planes (1/z, u/z, v/z
   and their steps across and down, from the first corner) with the same expressions in the
   same order. The fragment shaders evaluate them at the pixel's centre with `precise` (nothing
@@ -71,6 +112,10 @@ What still differs from the software renderer, by design:
 - `OS_GPUPIXEL=x,y,n`: in the n-th scene, what is at that pixel and every triangle over it
   (owner, kind, depth on the card).
 - `OS_GPU3D=0`: the race drawn by the software again, the pictures still shown by the card.
+- `OS_GPURES=native|<w>x<h>|<n>`: the size the card draws the scene at (n: n times fb's), over
+  the setting; `OS_RES=native` for RES NATIVE in one run.
+- `OS_GPUSHOTHI=1` with `OS_SHOTEVERY` or `OS_MENU_SHOT`: each picture also as the card shows
+  it, at its scene's size (`..._hi.ppm`).
 - `OS_NOBLOCKORDER=1`: a car's blocks by depth alone, in both renderers.
 - `OS_GPUPUFFS=1`: the scenes with smoke in them (how many of the puffs' triangles).
 
@@ -92,3 +137,9 @@ On Windows 11 with an RX 9070 XT (2026-10-23):
   bridge on track 1 a picture had differed in 5039 pixels (two pieces in one place with
   different textures), now 39. The extra draws for the cars' blocks cost nothing measurable
   (about 1.8 ms for the card's scene, 2.0 ms for the software's, the same run).
+- M3, the scene drawn larger: at fb's own size the pictures are the same as before, pixel for
+  pixel (a replay of track 1). Drawn three times larger and read back, they differ from the
+  one-to-one pictures in 0.012 % of their pixels (the card's middle pixel of each three is fb's
+  middle): the same sums at the same places. Pictures at 2880 x 2160 and the menu at 1920 x
+  1440 looked at: the HUD, the radar's darkened window, the replay's marks, the menu's cubes
+  and cars.
