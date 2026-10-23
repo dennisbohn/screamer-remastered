@@ -41,10 +41,13 @@ The software renderer is the fall-back, nothing to choose in the menus:
   on them as ever, so fades, the `SMG` blends and the 2D darkenings stay exact.
 - **Depth rules.** Pass 0 (everything solid) uses factors on the card's depth: a carpet counts
   as twice as far (half its depth), and objects get a hair's nudge by their distance rank so
-  that on a tie the one nearer the camera wins. Pass 1 (routine 224: smoke, glass, shadows,
-  beams) runs `depth_keep` itself against pass 0's depth and owner, then
-  `SMG[strength][what is there]`; triangles that overlap are drawn in turn with
-  `glTextureBarrier` between them.
+  that on a tie the one nearer the camera wins (objects at the same distance get the same
+  nudge: the later face wins, as in `raster_job`). A car's blocks come in the engine's order,
+  the last first, each block its own draw: the stencil holds the block's place, and a block
+  does not paint over the pixels of the car's later ones (`raster_job`'s `rkb`: the tyres
+  first, the body over them). Pass 1 (routine 224: smoke, glass, shadows, beams) runs
+  `depth_keep` itself against pass 0's depth and owner, then `SMG[strength][what is there]`;
+  triangles that overlap are drawn in turn with `glTextureBarrier` between them.
 
 What still differs from the software renderer, by design:
 
@@ -68,6 +71,7 @@ What still differs from the software renderer, by design:
 - `OS_GPUPIXEL=x,y,n`: in the n-th scene, what is at that pixel and every triangle over it
   (owner, kind, depth on the card).
 - `OS_GPU3D=0`: the race drawn by the software again, the pictures still shown by the card.
+- `OS_NOBLOCKORDER=1`: a car's blocks by depth alone, in both renderers.
 - `OS_GPUPUFFS=1`: the scenes with smoke in them (how many of the puffs' triangles).
 
 On Windows 11 with an RX 9070 XT (2026-10-23):
@@ -83,3 +87,8 @@ On Windows 11 with an RX 9070 XT (2026-10-23):
 - Time for a picture at 640 x 400 ULTRA, track 1, robot's race, no vsync: 1.72 ms with the
   software's scene, 1.59 ms with the card's (`OS_NOVSYNC=1`, a test switch). With vsync the
   card's wait for the screen falls into the reading back.
+- 2026-10-24, with a car's blocks in the engine's order (both renderers) and one nudge for
+  one distance: the same 1200 pictures, 0.024 % differ, 84 % of those at edges. Under the
+  bridge on track 1 a picture had differed in 5039 pixels (two pieces in one place with
+  different textures), now 39. The extra draws for the cars' blocks cost nothing measurable
+  (about 1.8 ms for the card's scene, 2.0 ms for the software's, the same run).

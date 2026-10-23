@@ -1861,7 +1861,7 @@ static void gpu_list(const tri_job *j)
     t->kind = (m->type == 64 ? GPU_KEYED : 0) | (m->type == 224 ? GPU_GLASS : 0) |
               (m->type == 160 ? GPU_WRAPS : 0) | (j->sprite ? GPU_SPRITE : 0);
     t->wrap_mask = pm != m ? 127 : 255;
-    t->id = j->id;
+    t->id = j->id; t->rank = j->rank;
     t->zbias = (m->type == 64 ? 1.002f : m->type == 160 ? 0.998f : 1.0f) * j->zbias;    /* (raster_job's) */
     t->ground_vy = j->ground_vy; t->eye_h = j->eye_h;
     t->x[0] = j->ax; t->y[0] = j->ay; t->iz[0] = j->ia; t->u[0] = j->au; t->v[0] = j->av;

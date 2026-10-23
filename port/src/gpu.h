@@ -29,6 +29,7 @@ typedef struct {
     int   kind;                             /* GPU_KEYED (colour 0 a hole), GLASS (routine 224), WRAPS (160), SPRITE */
     int   wrap_mask;
     int   id;                               /* the object, -1 none */
+    int   rank;                             /* a car's block: its place in the engine's order, -1 none */
     float zbias;                            /* the whole factor on 1 / depth, material's and object's */
     float ground_vy, eye_h;                 /* a sprite's (over_ground) */
 } gpu_tri;

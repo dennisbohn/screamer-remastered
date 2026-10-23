@@ -36,6 +36,8 @@
     X(void, ClearBufferiv, (GLenum, GLint, const GLint *)) \
     X(void, DepthFunc, (GLenum)) \
     X(void, DepthMask, (GLboolean)) \
+    X(void, StencilFunc, (GLenum, GLint, GLuint)) \
+    X(void, StencilOp, (GLenum, GLenum, GLenum)) \
     X(void, TextureBarrier, (void)) \
     X(void, PixelStorei, (GLenum, GLint)) \
     X(void, GenTextures, (GLsizei, GLuint *)) \
@@ -91,7 +93,8 @@ typedef struct {
     float ua, duz, duzy, va, dvz, dvzy; /* u / depth and v / depth the same */
     float zbias, hw, gvy, eh;           /* the software's depth factor, the card's, a sprite's ground and eye */
     int   offset, avail, flat, kind, wrap, id;
-    int   pad[3];
+    int   rank;                         /* (pass 0's draws, not the shaders') */
+    int   pad[2];
 } gpu_rec;
 
 /* a corner, and whose: the triangle's number goes with each corner (no gl_PrimitiveID: one
@@ -523,7 +526,8 @@ void gpu_materials(const uint8_t *bytes, long len)
     buffer_fill(G->mlb_buf, G->mlb_tex, GL_R8UI, bytes, len);
 }
 
-/* the targets: palette number, the software's depth, the owner, the card's depth */
+/* the targets: palette number, the software's depth, the owner, the card's depth (and a stencil:
+   a car's blocks, pass 0) */
 static void scene_targets(int w, int h)
 {
     if (w == G->sw && h == G->sh) return;
@@ -540,13 +544,13 @@ static void scene_targets(int w, int h)
     G->t_id = texture();
     G->TexImage2D(GL_TEXTURE_2D, 0, GL_R16I, w, h, 0, GL_RED_INTEGER, GL_SHORT, NULL);
     G->t_depth = texture();
-    G->TexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT32F, w, h, 0, GL_DEPTH_COMPONENT, GL_FLOAT, NULL);
+    G->TexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH32F_STENCIL8, w, h, 0, GL_DEPTH_STENCIL, GL_FLOAT_32_UNSIGNED_INT_24_8_REV, NULL);
     G->GenFramebuffers(1, &G->fbo0);
     G->BindFramebuffer(GL_FRAMEBUFFER, G->fbo0);
     G->FramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, G->t_index, 0);
     G->FramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, G->t_zsw, 0);
     G->FramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT2, GL_TEXTURE_2D, G->t_id, 0);
-    G->FramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, G->t_depth, 0);
+    G->FramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_TEXTURE_2D, G->t_depth, 0);
     const GLenum all[3] = { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2 };
     G->DrawBuffers(3, all);
     if (G->CheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) fprintf(stderr, "gpu: the scene's targets are not complete\n");
@@ -591,7 +595,11 @@ static void scene_factors(const gpu_view *v, const gpu_tri *t, int n)
         g_rank_d2 = v->obj_d2;
         qsort(ids, (size_t)nid, sizeof *ids, by_far);
         const float step = 1.0e-4f / (float)nid < 4.0e-7f ? 1.0e-4f / (float)nid : 4.0e-7f;
-        for (int r = 0; r < nid; r++) G->tie[ids[r]] = 1.0f + step * (float)r;
+        /* (objects at the same distance get the same nudge: there the later face wins, as in raster_job) */
+        for (int r = 0, k = 0; r < nid; r++) {
+            if (r > 0 && v->obj_d2[ids[r]] != v->obj_d2[ids[r - 1]]) k++;
+            G->tie[ids[r]] = 1.0f + step * (float)k;
+        }
     }
     free(ids);
 }
@@ -648,8 +656,8 @@ void gpu_scene(const gpu_view *v, const gpu_tri *t, int n, uint8_t *fb, float *z
         r->hw = q->zbias * (id >= 0 && (G->flags[id] & 1) ? 0.5f : 1.0f) * (id >= 0 ? G->tie[id] : 1.0f);
         r->gvy = q->ground_vy; r->eh = q->eye_h;
         r->offset = q->offset; r->avail = q->avail; r->flat = q->flat; r->kind = q->kind;
-        r->wrap = q->wrap_mask; r->id = id;
-        r->pad[0] = r->pad[1] = r->pad[2] = 0;
+        r->wrap = q->wrap_mask; r->id = id; r->rank = q->rank;
+        r->pad[0] = r->pad[1] = 0;
         gpu_corner *c = &G->corner[(size_t)m * 3];
         c[0].x = ax; c[0].y = ay; c[1].x = bx; c[1].y = by; c[2].x = cx; c[2].y = cy;
         c[0].tri = c[1].tri = c[2].tri = m;
@@ -686,18 +694,34 @@ void gpu_scene(const gpu_view *v, const gpu_tri *t, int n, uint8_t *fb, float *z
     G->ClearBufferiv(GL_COLOR, 2, &none);
     G->ClearBufferfv(GL_DEPTH, 0, &zero);
 
-    /* pass 0: the solid faces, in order; later ones win ties (raster_job: !(mine < there)) */
+    /* pass 0: the solid faces, in order; later ones win ties (raster_job: !(mine < there)).  A
+       car's blocks come the last in the engine's order first, and the stencil keeps each from
+       the pixels of the ones before it: raster_job's rkb */
     G->Viewport(0, 0, w, h);
     G->Scissor(0, 0, w, v->rows);
     G->Enable(GL_SCISSOR_TEST);
     G->Enable(GL_DEPTH_TEST);
     G->DepthFunc(GL_GEQUAL);
+    G->StencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
     G->BindVertexArray(G->vao3);
     G->ActiveTexture(GL_TEXTURE0);
     G->BindTexture(GL_TEXTURE_BUFFER, G->mlb_tex);
     G->UseProgram(G->prog0);
     G->Uniform2f(G->u0_size, (float)w, (float)h);
-    if (glass_from > 0) G->DrawArrays(GL_TRIANGLES, 0, glass_from * 3);
+    for (int i = 0, car = -1; i < glass_from; ) {
+        const int rank = G->rec[i].rank, id = G->rec[i].id;
+        int j = i + 1;
+        while (j < glass_from && G->rec[j].rank == rank && G->rec[j].id == id) j++;
+        if (rank < 0) { G->Disable(GL_STENCIL_TEST); car = -1; }
+        else {
+            if (id != car) { const GLint none_yet = 0; G->ClearBufferiv(GL_STENCIL, 0, &none_yet); car = id; }
+            G->Enable(GL_STENCIL_TEST);
+            G->StencilFunc(GL_GEQUAL, rank + 1, 0xff);
+        }
+        G->DrawArrays(GL_TRIANGLES, i * 3, (j - i) * 3);
+        i = j;
+    }
+    G->Disable(GL_STENCIL_TEST);
     G->TextureBarrier();
 
     /* pass 1: routine 224, reading what is there -- triangles that overlap are drawn one after
@@ -785,8 +809,8 @@ void gpu_scene(const gpu_view *v, const gpu_tri *t, int n, uint8_t *fb, float *z
             if (!((d0 >= 0 && d1 >= 0 && d2 >= 0) || (d0 <= 0 && d1 <= 0 && d2 <= 0))) continue;
             const gpu_rec *r = &G->rec[i];
             const float fx = cx - r->ax, fy = cy - r->ay, iz = r->ia + fx * r->diz + fy * r->dizy;
-            printf("  triangle %d: object %d, kind %d, colour %d, 1/depth %g x %g (card %g), corners %.1f,%.1f %.1f,%.1f %.1f,%.1f\n",
-                   i, r->id, r->kind, r->flat, (double)iz, (double)r->zbias, (double)(iz * r->hw * 8.0f),
+            printf("  triangle %d: object %d, block %d, kind %d, colour %d, 1/depth %g x %g (card %g), corners %.1f,%.1f %.1f,%.1f %.1f,%.1f\n",
+                   i, r->id, r->rank, r->kind, r->flat, (double)iz, (double)r->zbias, (double)(iz * r->hw * 8.0f),
                    (double)p[0], (double)p[1], (double)p[2], (double)p[3], (double)p[4], (double)p[5]);
         }
     }
