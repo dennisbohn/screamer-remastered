@@ -462,7 +462,9 @@ static void os_help(const char *me)
 "                 the one kept is RESOLUTION in Screamer's OPTIONS or Screamer 2's GAME\n"
 "                 SETTINGS, in openscreamer.cfg\n"
 #ifdef OS_GPU
-"  -renderer gpu|software  who shows the pictures this run (renderer= in openscreamer.cfg)\n"
+"  -renderer gpu|software  who draws the pictures this run: the graphics card (the default,\n"
+"                 if it has OpenGL 4.5) or the program itself (renderer= in openscreamer.cfg;\n"
+"                 a start that died on the card sets it to software)\n"
 #endif
 "  -home DIR      where settings and saves are kept\n"
 "                 default: $OPENSCREAMER_HOME, this directory if it already holds them,\n"

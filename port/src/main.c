@@ -141,6 +141,7 @@ static unsigned char g_obj_ground[4096 + MAX_OBJS + 8];   /* this picture: the o
 static int g_ground_now, g_obj_sprite;               /* the object being drawn: is such a piece / faces the screen (smoke) */
 static unsigned char g_obj_carpet[4096 + MAX_OBJS + 8];   /* this picture: the object is a ground carpet (mesh.carpet) */
 static int   g_tiemark;                           /* OS_TIEMARK, a test (render_frame) */
+static int   g_uv_run = 8;                        /* OS_UVRUN=1..8, a test: the texture's place exact every n-th pixel (raster_job) */
 static float g_obj_d2[4096 + MAX_OBJS + 8];   /* this picture: camera to each object's own position, squared (by object id) */
 static uint8_t   g_smg[112 * 256];  /* MAPn.SMG, see raster_tri; Screamer 2 makes its own, of 112 rows (s2_blend_make) */
 static int       g_smg_rows = 64;
@@ -381,6 +382,7 @@ static jmp_buf *g_next_part;           /* where os_go() jumps back to: the loop 
 #define SDL_RenderCopy(r, t, a, b)        (gpu_active() ? 0 : (SDL_RenderCopy)((r), (t), (a), (b)))
 #define SDL_RenderPresent(r)              (gpu_active() ? gpu_present() : (SDL_RenderPresent)(r))
 static int renderer_gpu(void);
+static int gpu_start_mark(int wanted);
 #endif
 
 /* MISTER: where a picture's time goes, for the log (mister.c).  0 the game's
@@ -401,7 +403,7 @@ static SDL_Window *sys_window(SDL_Renderer **ren)
         SDL_SetHint("SDL_MISTER_VIDEO_FORMAT", "INDEX8"); /* MISTER: and is the palette's numbers (fb) */
 #endif
 #ifdef OS_GPU
-        int gpu_wanted = renderer_gpu();
+        int gpu_wanted = gpu_start_mark(renderer_gpu());
         if (gpu_wanted) gpu_hints();
 #endif
         if (SDL_Init(SDL_INIT_VIDEO) != 0) { fprintf(stderr, "SDL_Init: %s\n", SDL_GetError()); return NULL; }
@@ -515,7 +517,13 @@ static void os_go(int argc, const char *a1, const char *a2)
     longjmp(*g_next_part, 1);
 }
 
-static struct { int res, diff, laps, speech, music, starting, vol_cd, vol_fx, vol_mu, detail, game, renderer; } g_cfg = { 0, 1, 0, 1, 1, 0, 0x6000, 0x6000, 0x6000, 2, 1, 0 };
+#ifdef OS_GPU
+#define RENDERER_DEFAULT 1                   /* the card (gpu.c); without OpenGL 4.5 the software way all the same */
+#else
+#define RENDERER_DEFAULT 0
+#endif
+static struct { int res, diff, laps, speech, music, starting, vol_cd, vol_fx, vol_mu, detail, game, renderer, gpu_starting; } g_cfg =
+    { 0, 1, 0, 1, 1, 0, 0x6000, 0x6000, 0x6000, 2, 1, RENDERER_DEFAULT, 0 };
 /* key_accelerate= ... lines: a key's name in the place of the one in the game's CONTROLS.CFG (controls.c) */
 static char g_cfg_key[6][40];
 static const char *const g_cfg_key_word[6] = { "key_accelerate", "key_brake", "key_left", "key_right", "key_gear_up", "key_gear_down" };
@@ -538,6 +546,7 @@ static void cfg_load(void)
         if (sscanf(line, "starting_high=%d", &n) == 1) g_cfg.starting = n != 0;
         if (sscanf(line, "game=%d", &n) == 1) g_cfg.game = n == 2 ? 2 : 1;
         if (sscanf(line, "renderer=%63s", val) == 1) g_cfg.renderer = !strcmp(val, "gpu");
+        if (sscanf(line, "gpu_starting=%d", &n) == 1) g_cfg.gpu_starting = n != 0;
         if (sscanf(line, "detail=%63s", val) == 1)
             for (int k = 0; k < 4; k++) if (!strcmp(val, g_detail_word[k])) g_cfg.detail = k;
         if (sscanf(line, "volume_cd=%d", &n) == 1) g_cfg.vol_cd = n < 0 ? 0 : n > 0x7fff ? 0x7fff : n;
@@ -565,6 +574,7 @@ static void cfg_save(void)
     if (g_cfg.game == 2) fprintf(f, "game=2\n");
 #ifdef OS_GPU
     fprintf(f, "renderer=%s\n", g_cfg.renderer ? "gpu" : "software");
+    if (g_cfg.gpu_starting) fprintf(f, "gpu_starting=1\n");
 #endif
     fclose(f);
 }
@@ -575,6 +585,32 @@ static int renderer_gpu(void)
 {
     const char *e = getenv("OS_RENDERER");
     return e ? !strcmp(e, "gpu") : g_cfg.renderer;
+}
+
+/* the card has drawn a race picture, or the program ends in order: the mark goes */
+static void gpu_started(void)
+{
+    if (!g_cfg.gpu_starting) return;
+    g_cfg.gpu_starting = 0;
+    cfg_save();
+}
+
+/* THE CARD THAT DID NOT START falls back to software, as high resolution does to low: a mark in
+   the settings file from just before the card is first used to its first race picture (or an
+   orderly end); one still there means the last start died on the way.  1: use the card */
+static int gpu_start_mark(int wanted)
+{
+    if (!wanted || getenv("OS_RENDERER")) return wanted;
+    if (g_cfg.gpu_starting) {
+        fprintf(stderr, "gpu: the last start with it did not get as far as a race picture -- the software way\n");
+        g_cfg.renderer = 0; g_cfg.gpu_starting = 0;
+        cfg_save();
+        return 0;
+    }
+    g_cfg.gpu_starting = 1;
+    cfg_save();
+    if (os_once(6)) atexit(gpu_started);
+    return 1;
 }
 #endif
 
@@ -1039,6 +1075,10 @@ static int      g_anim_clock;   /* 0..65535, once round every 3.33 s (0x21538) *
 static float    g_anim_time;    /* the same as 0..1 (0x18e08) */
 static int      g_nmat;
 static uint8_t *g_mlb;
+#ifdef OS_GPU
+static long     g_mlb_len;
+static int      g_gpu_mlb_sent;         /* g_mlb is on the card (gpu_materials) */
+#endif
 
 static int32_t rd32(const uint8_t *p)
 {
@@ -1085,6 +1125,9 @@ static int mlb_read(const char *path, int base)
     }
     fclose(f);
     if (base == 0) g_mlb = buf;
+#ifdef OS_GPU
+    if (base == 0) { g_mlb_len = len; g_gpu_mlb_sent = 0; }
+#endif
 
     /* the material table runs up to the first texture record */
     long table_end = len;
@@ -1419,6 +1462,7 @@ static void raster_job(const tri_job *j, int rows, int counted)      /* rows: bi
     const int   fogged = fog > 0.0f;
     const int   plain = !glass && !fogged && flat < 0 && !wraps;
     const uint8_t *const fade = j->fade;
+    const int   run = g_uv_run;
     for (int y = ys; y <= ye; y++) {
         if (!(rows >> (y & 7) & 1)) continue;               /* another lane's row */
         const float py = (float)y + 0.5f;
@@ -1442,7 +1486,7 @@ static void raster_job(const tri_job *j, int rows, int counted)      /* rows: bi
         float u_at = uz * rz_, v_at = vz * rz_;
         for (int x = xs, pi = y * fbw + xs; x <= xe; ) {
           int n_ = xe - x + 1;
-          if (n_ > 8) n_ = 8;
+          if (n_ > run) n_ = run;
           static const float part[9] = { 0.0f, 65536.0f, 65536.0f / 2, 65536.0f / 3, 65536.0f / 4, 65536.0f / 5, 65536.0f / 6, 65536.0f / 7, 65536.0f / 8 };
           const float fn_ = (float)n_;
           uz += duz * fn_; vz += dvz * fn_;
@@ -1779,8 +1823,50 @@ static void raster_flush(void)
     g_tri_n = 0;
 }
 
+#ifdef OS_GPU
+/* M2: this scene's triangles for the card, with what raster_job works out for each */
+static gpu_tri *g_gpu_tri;
+static int      g_gpu_tri_n, g_gpu_tri_cap, g_gpu_scene;
+
+static void gpu_list(const tri_job *j)
+{
+    if (g_gpu_tri_n == g_gpu_tri_cap) {
+        gpu_tri *more = realloc(g_gpu_tri, sizeof *more * (size_t)(g_gpu_tri_cap + 16384));
+        if (!more) return;
+        g_gpu_tri = more; g_gpu_tri_cap += 16384;
+    }
+    const material *const m = j->m;
+    const material *const pm = (m->type == 160 && g_env_mat >= 0) ? &g_mat[g_env_mat] : m;
+    int fr = (m->type == 160) ? (pm->levels * j->env_phase >> 16) : (m->levels * j->tex_phase >> 14);
+    if (fr < 0 || fr >= pm->levels) fr = 0;
+    gpu_tri *t = &g_gpu_tri[g_gpu_tri_n];
+    const uint8_t *page = pm->frame[fr];
+    const int on_card = page && page >= g_mlb && page < g_mlb + g_mlb_len;
+    if (!on_card && j->flat < 0) {
+        static int told;
+        if (!told++) fprintf(stderr, "gpu: a texture from another material file: not on the card, not drawn\n");
+    }
+    t->offset = on_card ? (int)(page - g_mlb) : 0;
+    t->avail = on_card ? (int)pm->frame_avail[fr] : 0;
+    t->flat = j->flat;
+    t->kind = (m->type == 64 ? GPU_KEYED : 0) | (m->type == 224 ? GPU_GLASS : 0) |
+              (m->type == 160 ? GPU_WRAPS : 0) | (j->sprite ? GPU_SPRITE : 0);
+    t->wrap_mask = pm != m ? 127 : 255;
+    t->id = j->id;
+    t->zbias = (m->type == 64 ? 1.002f : m->type == 160 ? 0.998f : 1.0f) * j->zbias;    /* (raster_job's) */
+    t->ground_vy = j->ground_vy; t->eye_h = j->eye_h;
+    t->x[0] = j->ax; t->y[0] = j->ay; t->iz[0] = j->ia; t->u[0] = j->au; t->v[0] = j->av;
+    t->x[1] = j->bx; t->y[1] = j->by; t->iz[1] = j->ib; t->u[1] = j->bu; t->v[1] = j->bv;
+    t->x[2] = j->cx; t->y[2] = j->cy; t->iz[2] = j->ic; t->u[2] = j->cu; t->v[2] = j->cv;
+    g_gpu_tri_n++;
+}
+#endif
+
 static void raster_list(const tri_job *j)
 {
+#ifdef OS_GPU
+    if (g_gpu_scene && g_tri_listing) { gpu_list(j); return; }
+#endif
     if (!g_tri_listing) { raster_job(j, ROWS_ALL, 1); return; }
     if (g_tri_n == TRI_LIST) raster_flush();
     g_tri[g_tri_n++] = *j;
@@ -2493,10 +2579,21 @@ static void render_scene(const camera *cam, const sky *s)
         mesh_animate_all(g_anim_clock);
     }
     MISTER_MARK(0);
+#ifdef OS_GPU
+    /* M2: Screamer's scene on the card (OS_GPU3D=0: still raster_job, for comparing) */
+    if (gpu_active() && os_game() == 1 && g_scene && g_mlb && g_have_smg && g_fog <= 0.0f && !g_fade_on &&
+        !(getenv("OS_GPU3D") && !atoi(getenv("OS_GPU3D")))) {
+        if (!g_gpu_mlb_sent) { gpu_materials(g_mlb, g_mlb_len); g_gpu_mlb_sent = 1; }
+        g_gpu_scene = gpu_scene_ready();
+    }
+#endif
     {
         const int want = getenv("OS_LANES") ? atoi(getenv("OS_LANES")) : 4;
         g_lanes = (want == 2 || want == 3 || want == 8) ? want : 4;
         tri_helper *h = tri_helper_get();
+#ifdef OS_GPU
+        if (g_gpu_scene) h = NULL;                      /* (the backdrop here, then the card) */
+#endif
         if (h && !SDL_AtomicGet(&h->busy)) {
             sky_ready(s);
             h->yaw = cam->yaw; h->pitch = cam->pitch; h->roll = cam->roll;
@@ -2547,6 +2644,16 @@ static void render_scene(const camera *cam, const sky *s)
                 draw_object(&g_car[k], g_scene->count + k, pass, cam);
     }
     MISTER_MARK(2);
+#ifdef OS_GPU
+    if (g_gpu_scene) {
+        const gpu_view v = { FB_W, FB_H, g_vh, g_cy, g_focal_y, g_obj_d2, g_obj_carpet, g_obj_ground,
+                             (int)(sizeof g_obj_d2 / sizeof g_obj_d2[0]), g_smg, g_smg_rows, g_tie_rule };
+        gpu_scene(&v, g_gpu_tri, g_gpu_tri_n, fb, zb, idb);
+        g_gpu_tri_n = 0;
+        g_gpu_scene = 0;
+        gpu_started();                                  /* (a race picture from the card: the start's mark goes) */
+    } else
+#endif
     raster_flush();
     g_tri_listing = 0;
     if (g_show_edges) draw_guides();
@@ -2557,6 +2664,10 @@ static void s2_env_slide(const camera *cam);
 static void render_frame(const camera *cam, const sky *s)
 {
     g_tiemark = getenv("OS_TIEMARK") != NULL;           /* a test: pixels won on a tie of depth in magenta */
+    {
+        const char *r = getenv("OS_UVRUN");
+        g_uv_run = r && atoi(r) >= 1 && atoi(r) <= 8 ? atoi(r) : 8;
+    }
     if (os_game() == 2) { s2_dark_make(); s2_env_slide(cam); }
 #ifdef MISTER_HYBRID
     /*
@@ -11614,6 +11725,9 @@ static int session(int argc, char **argv)
     }
 
     if (shot) {
+#ifdef OS_GPU
+        if (renderer_gpu()) { setenv("OS_GPUHIDDEN", "1", 1); sys_window(NULL); }     /* (the card's picture: a hidden window for OpenGL) */
+#endif
         camera cam;
         path_at(r, t0, cam_height, &cam);
         cam.pitch = base_pitch;
