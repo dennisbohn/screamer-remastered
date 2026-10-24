@@ -521,6 +521,12 @@ static void show_pixels(SDL_Texture *tex, const uint8_t *pixels, int rows)
  */
 static int g_lay_want, g_lay_on, g_lay_flip, g_lay_n;
 static uint8_t g_lay_scene[FB_MAXW * (FB_MAXH + TALL_ROWS)], g_lay_dk[FB_MAXW * (FB_MAXH + TALL_ROWS)];
+/* a flat thing has drawn the pixel (LAY_PUT, LAY_RUN in the routines that put pixels down): its
+   own colour, whatever the scene's is -- without it a logo in white over the white of a banner
+   was taken for the scene there, and the card's banner showed through */
+static uint8_t g_lay_op[FB_MAXW * (FB_MAXH + TALL_ROWS)];
+#define LAY_PUT(i)    (g_lay_on ? (void)(g_lay_op[(i)] = 1) : (void)0)
+#define LAY_RUN(p, n) (g_lay_on ? (void)memset(g_lay_op + ((p) - fb), 1, (size_t)(n)) : (void)0)
 static uint8_t g_lay_lut[32][256];              /* the darkenings, each after another or none (g_lay_after) */
 static const uint8_t *g_lay_by[32];
 static uint8_t g_lay_after[32];
@@ -531,6 +537,7 @@ static void lay_begin(int flip)                 /* flip: the picture turned over
     if (!g_lay_on) return;
     memcpy(g_lay_scene, fb, FB_BYTES);
     memset(g_lay_dk, 0, (size_t)(FB_W * FB_H));
+    memset(g_lay_op, 0, (size_t)(FB_W * FB_H));
     g_lay_n = 0; g_lay_flip = flip;
 }
 
@@ -549,7 +556,8 @@ static inline void lay_dark(int i, const uint8_t *t)
 {
     if (g_lay_on) {
         const int k = g_lay_dk[i];
-        if (k != 255 && fb[i] == (k ? g_lay_lut[k - 1][g_lay_scene[i]] : g_lay_scene[i])) g_lay_dk[i] = (uint8_t)lay_then(k, t);
+        if (k != 255 && !g_lay_op[i] && fb[i] == (k ? g_lay_lut[k - 1][g_lay_scene[i]] : g_lay_scene[i]))
+            g_lay_dk[i] = (uint8_t)lay_then(k, t);
     }
     fb[i] = t[fb[i]];
 }
@@ -559,9 +567,9 @@ static void lay_end(void)
     if (!g_lay_on) return;
     g_lay_on = 0;
     static uint8_t layer[FB_MAXW * (FB_MAXH + TALL_ROWS)];
-    for (int i = 0; i < FB_W * FB_H; i++) {
+    for (int i = 0; i < FB_W * FB_H; i++) {          /* (and where fb no longer shows the scene: a flat thing not marked) */
         const int k = g_lay_dk[i];
-        layer[i] = (uint8_t)(k == 255 || fb[i] != (k ? g_lay_lut[k - 1][g_lay_scene[i]] : g_lay_scene[i]) ? 1 : k ? 1 + k : 0);
+        layer[i] = (uint8_t)(g_lay_op[i] || k == 255 || fb[i] != (k ? g_lay_lut[k - 1][g_lay_scene[i]] : g_lay_scene[i]) ? 1 : k ? 1 + k : 0);
     }
     gpu_overlay(layer, &g_lay_lut[0][0], g_lay_n, g_lay_flip);
 }
@@ -569,6 +577,8 @@ static void lay_end(void)
 #define lay_begin(flip) ((void)0)
 #define lay_end()       ((void)0)
 #define lay_dark(i, t)  (fb[(i)] = (t)[fb[(i)]])
+#define LAY_PUT(i)      ((void)0)
+#define LAY_RUN(p, n)   ((void)0)
 #endif
 
 /* run another part of the program next (a1 / a2: its arguments), from a clean
@@ -860,6 +870,7 @@ static void pic_put(const uint8_t *pic, int scene)
     for (int y = 0; y < rows; y++) {                 /* (g_yd: every second row of the picture in a wide one) */
         const uint8_t *from = pic + (size_t)(y * g_yd) * ART_W;
         memcpy(fb + top + y * FB_W, from, (size_t)FB_W);
+        LAY_RUN(fb + top + y * FB_W, FB_W);
     }
 }
 
@@ -5417,6 +5428,7 @@ static void pkc_draw(const int16_t *pic)
         uint8_t *at = to + known[k].run[3 * r + 1];
         const int len = known[k].run[3 * r + 2];
         for (int i = 0; i < len; i++) at[i] = (uint8_t)from[i];
+        LAY_RUN(at, len);
     }
 }
 
@@ -6419,7 +6431,7 @@ static void dash_line(int x0, int y0, int x1, int y1, uint8_t col)
         int x = n ? x0 + (x1 - x0) * i / n : x0, y = n ? y0 + (y1 - y0) * i / n : y0;
         if (g_yd == 2) { if (y & 1) continue; y >>= 1; }
         y += g_oy;
-        if (x >= 0 && y >= 0 && x < FB_W && y < FB_H) fb[y * FB_W + x] = col;
+        if (x >= 0 && y >= 0 && x < FB_W && y < FB_H) { fb[y * FB_W + x] = col; LAY_PUT(y * FB_W + x); }
     }
 }
 
@@ -6563,6 +6575,7 @@ static void hud_put(int x, int y, int idx)
     y += g_oy;
     if (x < g_clip[0] || x >= g_clip[1] || y < g_clip[2] || y >= g_clip[3]) return;
     fb[y * FB_W + x] = (uint8_t)idx;
+    LAY_PUT(y * FB_W + x);
 }
 
 /* 0x24fc0 with draw = 1, 0x25448 with draw = 0.  Positions and the width
@@ -6643,7 +6656,7 @@ static void hud_sprite_px(int x, int y, int n)
         const int odd = g_yd == 2 && (yy & 1) && r > 0;        /* (as in hud_text) */
         for (int c = c0; c < c1; c++) {
             const uint8_t v = from[c];
-            if (v && !(odd && above[c])) to[c] = v;
+            if (v && !(odd && above[c])) { to[c] = v; LAY_PUT((int)(to - fb) + c); }
         }
     }
 }
@@ -6909,7 +6922,7 @@ static void cd_draw(float dt)
         for (int i = 0; i < *vol[g_cd.chan] / 1024; i++)
             for (int y = 0x45 * SY + g_oy; y <= 0x4a * SY + SY - 1 + g_oy; y++)
                 for (int x = (0x55 + i * 3) * g_s; x < (0x55 + i * 3) * g_s + g_s; x++)
-                    if (x < FB_W && y < FB_H) fb[y * FB_W + x] = (uint8_t)bar_colour[(i / 10) & 3];
+                    if (x < FB_W && y < FB_H) { fb[y * FB_W + x] = (uint8_t)bar_colour[(i / 10) & 3]; LAY_PUT(y * FB_W + x); }
     }
 }
 
@@ -9520,8 +9533,10 @@ static void tiny_number(int value, int line)
                     for (int yy = -1 + pass; yy < k + 1 - pass; yy++)
                         for (int xx = -1 + pass; xx < k + 1 - pass; xx++) {
                             int x = x0 + (c * 4 + q) * k + xx, y = y0 + r * k + yy;
-                            if (x >= 0 && y >= 0 && x < FB_W && y < FB_H)
+                            if (x >= 0 && y >= 0 && x < FB_W && y < FB_H) {
                                 fb[y * FB_W + x] = pass ? pal_near(0xffff00) : pal_near(0);
+                                LAY_PUT(y * FB_W + x);
+                            }
                         }
                 }
 }
@@ -12766,8 +12781,12 @@ static int session(int argc, char **argv)
                 static int shot_n;
                 if (g_in.clock >= 1.5f + 2.5f * (float)shot_n) {
                     char name[64];
-                    snprintf(name, sizeof name, "intro_%d.ppm", shot_n++);
+                    snprintf(name, sizeof name, "intro_%d.ppm", shot_n);
                     write_ppm(name);
+#ifdef OS_GPU
+                    if (getenv("OS_GPUSHOTHI")) { snprintf(name, sizeof name, "intro_%d_hi.ppm", shot_n); gpu_shot_next(name); }
+#endif
+                    shot_n++;
                     if (shot_n >= 8) running = 0;
                 }
             }
