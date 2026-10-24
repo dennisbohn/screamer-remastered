@@ -3,19 +3,10 @@
 A remaster of *Screamer* (1995) and *Screamer 2* (1996), optimised for today's PCs.
 
 Built on [OpenScreamer](https://github.com/ItsDanik/openscreamer) by Danik. This project goes
-its own way: it is not affiliated with OpenScreamer and does not run on the MiSTer.
+its own way: it is not affiliated with OpenScreamer and does not run on the MiSTer. Please
+report problems here, not to OpenScreamer.
 
 **Beta.** `openscreamer --version` prints the version.
-
-## Thanks
-
-Almost everything that makes the games run is Danik's work in OpenScreamer; his commits are kept
-in this repository's history. If you like it, have a look at
-[OpenScreamer](https://github.com/ItsDanik/openscreamer) and its
-[MiSTer core](https://github.com/ItsDanik/openscreamer_MiSTer), and consider supporting Danik on
-[Patreon](https://www.patreon.com/itsdanik).
-
-Please report problems with this project here, not to OpenScreamer.
 
 ## What is new
 
