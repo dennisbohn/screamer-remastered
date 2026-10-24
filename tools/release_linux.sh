@@ -1,9 +1,9 @@
 #!/bin/sh
-# The Linux x86-64 release: openscreamer built in a Debian 11 container, so
+# The Linux x86-64 release: screamer-remastered built in a Debian 11 container, so
 # that it runs on distributions back to about 2018 (it ends up asking for
 # glibc 2.27 and nothing of SDL2 newer than 2.0.9; SDL2 is the
 # system's own libSDL2-2.0.so.0), with a README and the licences, as
-#   dist/openscreamer-<version>-linux-x86_64.tar.gz
+#   dist/screamer-remastered-<version>-linux-x86_64.tar.gz
 # usage: tools/release_linux.sh        (needs docker and curl)
 #
 # The container is any image of Debian 11 with gcc and cmake: by default the
@@ -16,7 +16,7 @@ set -e
 cd "$(dirname "$0")/.."
 ROOT=$PWD
 V=$(sh tools/version.sh)
-NAME=openscreamer-$V-linux-x86_64
+NAME=screamer-remastered-$V-linux-x86_64
 IMAGE=${OS_RELEASE_IMAGE:-mister-hybrid-tc}
 SDL=SDL2-2.32.10
 W=build/release-linux
@@ -37,15 +37,15 @@ docker run --rm -u "$(id -u):$(id -g)" -e HOME=/tmp -e OS_VERSION_IS="$V" -v "$R
     cmake --install $W/sdl > /dev/null
   fi
   PKG_CONFIG_PATH=$ROOT/$W/prefix/lib/pkgconfig cmake -S port -B $W/game -DCMAKE_BUILD_TYPE=Release -DCMAKE_SKIP_RPATH=ON -DOS_GLIBC_227=ON > /dev/null
-  cmake --build $W/game -j\$(nproc) 2>&1 | grep -E ' error|Built target openscreamer'
-  strip $W/game/openscreamer"
+  cmake --build $W/game -j\$(nproc) 2>&1 | grep -E ' error|Built target screamer-remastered'
+  strip $W/game/screamer-remastered"
 
-cp $W/game/openscreamer "dist/$NAME/"
+cp $W/game/screamer-remastered "dist/$NAME/"
 cp LICENSE "dist/$NAME/LICENSE.txt"
 cp port/src/nuked/opl3.h "dist/$NAME/LICENSE-nuked-opl3.txt"
 sed "s/@VERSION@/$V/" tools/release_linux_readme.txt > "dist/$NAME/README.txt"
 tar -C dist -czf "dist/$NAME.tar.gz" "$NAME"
 echo "what it needs:"
-objdump -p "dist/$NAME/openscreamer" | grep NEEDED
-objdump -T "dist/$NAME/openscreamer" | grep -o 'GLIBC_[0-9.]*' | sort -V | tail -1
+objdump -p "dist/$NAME/screamer-remastered" | grep NEEDED
+objdump -T "dist/$NAME/screamer-remastered" | grep -o 'GLIBC_[0-9.]*' | sort -V | tail -1
 ls -la "dist/$NAME.tar.gz"

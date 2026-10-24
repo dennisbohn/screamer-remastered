@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The GPU renderer against the software one: the same pictures from both, pixel by pixel.
 
-Usage:  python3 tools/gpu_ab.py --exe port/build/openscreamer --data screamer --out /tmp/ab
+Usage:  python3 tools/gpu_ab.py --exe port/build/screamer-remastered --data screamer --out /tmp/ab
             [--tracks 1-12] [--views 6] [--race 1500] [--every 250] [--res low,high] [--jobs 4]
 
 Views along each track (--shot) and a robot's race (OS_DRIVE_DEMO, every --every-th picture,
@@ -78,7 +78,7 @@ def run(args, env, cwd, log):
 
 
 def case_env(opt, renderer, home, res):
-    env = dict(os.environ, OPENSCREAMER_HOME=home, SDL_AUDIODRIVER="dummy",
+    env = dict(os.environ, SCREAMER_HOME=home, SDL_AUDIODRIVER="dummy",
                OS_DETAIL=str(opt.detail), OS_RES=res, OS_RENDERER=renderer)
     for k in ("OS_UVRUN", "OS_GPUHIDDEN", "OS_DRIVE_DEMO", "OS_SHOTEVERY", "SDL_VIDEODRIVER", "SDL_RENDER_DRIVER",
               "OS_FILTER", "OS_MSAA", "OS_GPURES"):

@@ -10,7 +10,7 @@ routines (tools/s2c.py -> s2_gen.inc) made of it.  Where they part, the conversi
 
     OS_S2FLAT=36 OS_S2NONEAR=1 OS_S2AT=x,y,heading OS_S2STEP=0.04 OS_S2PHYS=<frames> \
       OS_S2KEYS=A OS_S2KEYS2=AL OS_S2KEYS2AT=4 OS_S2DUMP=block.bin OS_S2TRACEFILE=trace.bin \
-      port/build/openscreamer -game 2
+      port/build/screamer-remastered -game 2
     python3 tools/s2emu.py block.bin trace.bin --step 0.04 --keys A --keys2 AL --at 4 --kind 36
 
 Needs `unicorn` and `capstone` (pip).  What is not the game's here: the same things the port

@@ -92,7 +92,7 @@ void controls_init(const char *const key[6])
         if (key && key[i] && key[i][0]) {
             SDL_Scancode k = SDL_GetScancodeFromName(key[i]);
             if (k != SDL_SCANCODE_UNKNOWN) { g_key[i][0] = k; g_key[i][1] = SDL_SCANCODE_UNKNOWN; }
-            else fprintf(stderr, "openscreamer.cfg: no key is called \"%s\"\n", key[i]);
+            else fprintf(stderr, "screamer-remastered.cfg: no key is called \"%s\"\n", key[i]);
         }
     }
     g_ready = 1;

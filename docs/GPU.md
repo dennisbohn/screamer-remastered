@@ -2,16 +2,16 @@
 
 OpenGL 4.5 via SDL2, in `port/src/gpu.c`. Built when `OS_GPU` is on, the CMake default, and then
 it is what draws: the menus' pictures are shown
-through the card, a race's 3D scene is drawn on it -- at the window's own size (RES NATIVE),
+through the card, a race's 3D scene is drawn on it -- at the window's own size (RES),
 and so is the menu's 3D.
 
 The software renderer is the fall-back, nothing to choose in the menus:
 
 - no OpenGL 4.5 (no context, a shader that does not compile): the software way, as before;
 - a start with the card that died before its first race picture: the next start sets
-  `renderer=software` in `openscreamer.cfg` (a mark, `gpu_starting=1`, is in the file from just
+  `renderer=software` in `screamer-remastered.cfg` (a mark, `gpu_starting=1`, is in the file from just
   before the card is first used to the first race picture or an orderly end);
-- by hand: `renderer=software` in `openscreamer.cfg`, `-renderer software` on the command
+- by hand: `renderer=software` in `screamer-remastered.cfg`, `-renderer software` on the command
   line, `OS_RENDERER=software` for one run (and `gpu` the same way back).
 
 ## Status
@@ -29,14 +29,17 @@ The software renderer is the fall-back, nothing to choose in the menus:
 
 ## The picture's size (M3)
 
-OPTIONS has one line GRAPHICS in the place of DETAIL and RESOLUTION; its page has RES,
-WINDOW / FULLSCREEN and DETAIL, then FILTERING and MSAA (next section):
+OPTIONS starts with three pages of the port's own (since 2026-10-24): DISPLAY (RES, WINDOW /
+FULLSCREEN), GRAPHICS (DETAIL, then FILTERING and MSAA: next section) and AUDIO (the game's
+SPEECH and MUSIC); then the game's DIFF., LAP NUMBER and VIEW RECORDS.
 
-- **RES NATIVE** (the default): the card draws the scene at the size of the window's 4:3 part,
-  in its own pixels (a 4K screen in full: 2880 x 2160). **RES SVGA**: STARTH's 640 x 400,
-  exactly as before, pixel for pixel. Both use the high set's flat artwork; 320 x 200 (STARTL,
-  the low set) is gone since 2026-10-24. `resolution=native|svga` in `openscreamer.cfg` (the old
-  `vga` / `low` are read as SVGA, `high` as NATIVE); `-res native|svga`.
+- **RES**: the rows the card draws the scene with, in steps -- 480P, 720P, 1080P, 1440P, 2160P,
+  2880P, 4320P under the screen's height, and the screen's own last (the default). The scene is
+  the window's 4:3 part, so 1440P is 1920 x 1440; a step larger than the window draws at the
+  window's size. `resolution=native|<rows>` in `screamer-remastered.cfg` (the old words `svga`,
+  `vga`, `low`, `high` are read as native). Without the card there is no RES line: the software
+  draws 640 x 400. `OS_RES=svga` (a test, also `-res svga`) draws the scene at fb's own 640 x 400,
+  exactly as the software way, pixel for pixel; 320 x 200 (STARTL, the low set) is gone.
 - **WINDOW / FULLSCREEN**: the whole screen as the desktop has it, never another screen mode,
   so that no setting can leave the screen black; F11 the same. `display=window|fullscreen`.
 - **DETAIL**: the game's (and ULTRA), as before.
@@ -68,11 +71,11 @@ Every change shows at once. How a larger scene is drawn:
 ## FILTERING and MSAA (M3)
 
 Two more lines on the GRAPHICS page, **FILTERING OFF / ON** and **MSAA OFF / 2X / 4X / 8X**
-(`filtering=0|1`, `msaa=0|2|4|8` in `openscreamer.cfg`; both off by default, the original's
+(`filtering=0|1`, `msaa=0|2|4|8` in `screamer-remastered.cfg`; both off by default, the original's
 look). Every change shows at once, in the menu's cubes too. Without the card the two lines are
 not there; MSAA's line goes as far as the card can. Both off: the pictures are the same as
 before, byte for byte (also the larger ones). With either on, the card's scene is what is shown,
-at fb's own size too (RES SVGA), with the flat things over it as for M3.
+at fb's own size too (OS_RES=svga), with the flat things over it as for M3.
 
 - **The palette numbers stay.** The index target keeps exactly what it had (nearest texels,
   `SMG` on numbers): fb is still read back from it for the HUD and the darkenings, and pass 1
@@ -102,7 +105,7 @@ at fb's own size too (RES SVGA), with the flat things over it as for M3.
   left out for being between two pixels' middles (`cull_set`): a sample may lie in it.
 - **Safety.** FILTERING and MSAA have their own OpenGL functions and shaders: anything missing
   and only they are not there. No room for the targets: fewer samples, then none. A start that
-  dies with either on (the mark in `openscreamer.cfg`) turns them off, not the card.
+  dies with either on (the mark in `screamer-remastered.cfg`) turns them off, not the card.
 
 ## How the scene is drawn (M2)
 
@@ -153,7 +156,7 @@ What still differs from the software renderer, by design:
   (owner, kind, depth on the card).
 - `OS_GPU3D=0`: the race drawn by the software again, the pictures still shown by the card.
 - `OS_GPURES=native|<w>x<h>|<n>`: the size the card draws the scene at (n: n times fb's), over
-  the setting; `OS_RES=native` for RES NATIVE in one run.
+  the setting; `OS_RES=native|svga` for one run.
 - `OS_GPUSHOTHI=1` with `OS_SHOTEVERY` or `OS_MENU_SHOT`: each picture also as the card shows
   it, at its scene's size (`..._hi.ppm`).
 - `OS_NOBLOCKORDER=1`: a car's blocks by depth alone, in both renderers.

@@ -1,4 +1,4 @@
-OpenScreamer @VERSION@ for Windows (64-bit)
+Screamer Remastered @VERSION@ for Windows (64-bit)
 ==========================================
 
 A reimplementation of Screamer (Graffiti / Virgin Interactive, 1995) and
@@ -10,17 +10,17 @@ reading the original programs.
   Screamer 2: the game's own 3D menu, arcade, the championship's four
               leagues, time attack and its ghost, the seven tracks with
               their weather, set-ups, damage, replays and best times, the
-              CD's music; 320x200 or 640x400. Not in it: two players, the
+              CD's music, at 640x400. Not in it: two players, the
               network game, the 65,000-colour versions.
 
-Beta. Please report problems at https://github.com/ItsDanik/openscreamer
+Beta. Please report problems at https://github.com/dennisbohn/screamer-remastered
 
 YOU NEED THE ORIGINAL GAMES
-  OpenScreamer contains no part of either game. Both are still sold: buy
+  Screamer Remastered contains no part of either game. Both are still sold: buy
   them, and copy each game's folder -- the one that holds DATA and GFX --
   next to the program, named "screamer" and "screamer2":
 
-      openscreamer.exe
+      screamer-remastered.exe
       SDL2.dll
       screamer\DATA\GEN.DAT ...
       screamer\GFX\GAME.DAT ...
@@ -41,7 +41,7 @@ YOU NEED THE ORIGINAL GAMES
   without music.
 
 RUN
-  Double-click openscreamer.exe. Windows 10 or 11, 64-bit.
+  Double-click screamer-remastered.exe. Windows 10 or 11, 64-bit.
   (Windows may warn about a program from an unknown publisher: "More info",
   then "Run anyway".)
 
@@ -60,21 +60,21 @@ KEYS
 
   Screamer 2: R (or M) the mirror; ESC pauses, with the CD player.
 
-  OPTIONS in Screamer's menu has the picture's size (320x200 or 640x400),
-  the detail, difficulty, laps, speech and music; GAME SETTINGS in Screamer
-  2's options room has its own (RESOLUTION, above DETAIL LEVEL).
+  OPTIONS in Screamer's menu has GRAPHICS (the picture's size, window or full
+  screen, detail, filtering, MSAA), difficulty, laps, speech and music; GAME
+  SETTINGS in Screamer 2's options room has its own.
 
 FILES IT KEEPS
-  %APPDATA%\openscreamer\   settings, best times, championship, replays,
-                            time-attack ghosts, and openscreamer.log (what
+  %APPDATA%\screamer-remastered\   settings, best times, championship, replays,
+                            time-attack ghosts, and screamer-remastered.log (what
                             the program has to say; look there if it does
                             not start)
 
-  From a command prompt:  openscreamer.exe --help   lists the options;
+  From a command prompt:  screamer-remastered.exe --help   lists the options;
   -data <folder> names the game's folder, -home <folder> the settings'.
 
 LICENCE
   GPL-3.0 (LICENSE.txt). The FM chip is Nuked OPL3 by Nuke.YKT,
   LGPL-2.1 or later (LICENSE-nuked-opl3.txt). SDL2.dll is the Simple
   DirectMedia Layer, zlib licence (LICENSE-SDL2.txt).
-  Source: https://github.com/ItsDanik/openscreamer
+  Source: https://github.com/dennisbohn/screamer-remastered

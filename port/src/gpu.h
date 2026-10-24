@@ -4,7 +4,7 @@
  * race's 3D scene drawn from raster_job's triangle list, read back into fb for the HUD; M3 that
  * scene drawn at any size, and the flat things in fb laid over it as the picture is shown, with
  * FILTERING and MSAA if wanted.  Only
- * in a build with OS_GPU, where it is the default (renderer= in openscreamer.cfg, -renderer,
+ * in a build with OS_GPU, where it is the default (renderer= in screamer-remastered.cfg, -renderer,
  * OS_RENDERER).  Anything missing -- no OpenGL 4.5, a shader that does not compile -- and the
  * software way does it all as before.
  */

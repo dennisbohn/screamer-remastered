@@ -1,5 +1,5 @@
 /*
- * main.c - OpenScreamer, track viewer.
+ * main.c - Screamer Remastered, track viewer.
  *
  * Draws a track exactly as the game's own data describes it: every piece in
  * MAPn.MMP, with the mesh MAPn.UNR gives it, turned by the record's own
@@ -311,7 +311,7 @@ static int sky_load(sky *s, const char *path)
  */
 
 /*
- * THE PORT'S SETTINGS FILE, openscreamer.cfg -- what the game keeps in
+ * THE PORT'S SETTINGS FILE, screamer-remastered.cfg -- what the game keeps in
  * CHOICE.DAT beside the records: the options, and the port's own (the
  * resolution, the display, the card's).
  */
@@ -349,13 +349,13 @@ static SDL_Window *sys_window(SDL_Renderer **ren)
 #ifdef OS_GPU
         if (gpu_wanted) { gpu_attributes(); flags |= gpu_window_flags(); }
 #endif
-        win = SDL_CreateWindow("OpenScreamer", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
+        win = SDL_CreateWindow("Screamer Remastered", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
                                960, 720, flags);
 #ifdef OS_GPU
         if (!win && gpu_wanted) {               /* no OpenGL window here: the software way */
             fprintf(stderr, "gpu: %s -- the software way shows the pictures\n", SDL_GetError());
             gpu_wanted = 0;
-            win = SDL_CreateWindow("OpenScreamer", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
+            win = SDL_CreateWindow("Screamer Remastered", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
                                    960, 720, SDL_WINDOW_RESIZABLE);
         }
 #endif
@@ -506,17 +506,15 @@ static void os_go(int argc, const char *a1, const char *a2)
 
 #ifdef OS_GPU
 #define RENDERER_DEFAULT 1                   /* the card (gpu.c); without OpenGL 4.5 the software way all the same */
-#define NATIVE_DEFAULT   1                   /* RES NATIVE: the scene at the window's size */
 #else
 #define RENDERER_DEFAULT 0
-#define NATIVE_DEFAULT   0
 #endif
-/* native: the card draws the scene at the window's size (resolution=native; else 640 x 400);
-   display: 1 the whole screen, as the desktop is (no other screen mode, ever); filtering, msaa: the
-   card's (0, or 2, 4, 8 samples) */
-static struct { int diff, laps, speech, music, vol_cd, vol_fx, vol_mu, detail, game, renderer, gpu_starting, native, display, filtering, msaa, music_fm; } g_cfg =
-    { 1, 0, 1, 1, 0x6000, 0x6000, 0x6000, 2, 1, RENDERER_DEFAULT, 0, NATIVE_DEFAULT, 0, 0, 0, 0 };
-static int g_native;                         /* this run: g_cfg.native, or OS_RES=native */
+/* rows: the card draws the scene with this many rows (resolution=<rows>; 0 = native, as many as the
+   window has); display: 1 the whole screen, as the desktop is (no other screen mode, ever);
+   filtering, msaa: the card's (0, or 2, 4, 8 samples) */
+static struct { int diff, laps, speech, music, vol_cd, vol_fx, vol_mu, detail, game, renderer, gpu_starting, rows, display, filtering, msaa, music_fm; } g_cfg =
+    { 1, 0, 1, 1, 0x6000, 0x6000, 0x6000, 2, 1, RENDERER_DEFAULT, 0, 0, 0, 0, 0, 0 };
+static int g_res_rows;                       /* this run: g_cfg.rows; -1 fb's own 640 x 400 (OS_RES=svga, a test) */
 /* key_accelerate= ... lines: a key's name in the place of the one in the game's CONTROLS.CFG (controls.c) */
 static char g_cfg_key[6][40];
 static const char *const g_cfg_key_word[6] = { "key_accelerate", "key_brake", "key_left", "key_right", "key_gear_up", "key_gear_down" };
@@ -526,13 +524,13 @@ static int    g_argc;
 
 static void cfg_load(void)
 {
-    FILE *f = fopen("openscreamer.cfg", "r");
+    FILE *f = fopen("screamer-remastered.cfg", "r");
     if (!f) return;
     char line[128], val[64];
     int n;
     while (fgets(line, sizeof line, f)) {
-        if (sscanf(line, "resolution=%63s", val) == 1)          /* (vga and low, gone, are svga now; high was the best there was) */
-            g_cfg.native = !strcmp(val, "native") || !strcmp(val, "high");
+        if (sscanf(line, "resolution=%63s", val) == 1)          /* (native, and the old words svga, vga, high, low: 0) */
+            g_cfg.rows = atoi(val) >= 240 && atoi(val) <= 8192 ? atoi(val) : 0;
         if (sscanf(line, "display=%63s", val) == 1) g_cfg.display = !strcmp(val, "fullscreen");
         if (sscanf(line, "filtering=%d", &n) == 1) g_cfg.filtering = n != 0;
         if (sscanf(line, "msaa=%d", &n) == 1) g_cfg.msaa = n >= 8 ? 8 : n >= 4 ? 4 : n >= 2 ? 2 : 0;
@@ -559,12 +557,19 @@ static void cfg_load(void)
     fclose(f);
 }
 
+static const char *rows_word(int rows)
+{
+    static char w[16];
+    snprintf(w, sizeof w, "%d", rows);
+    return w;
+}
+
 static void cfg_save(void)
 {
-    FILE *f = fopen("openscreamer.cfg", "w");
+    FILE *f = fopen("screamer-remastered.cfg", "w");
     if (!f) return;
     fprintf(f, "detail=%s\nresolution=%s\ndifficulty=%d\nlaps=%d\nspeech=%d\nmusic=%d\n", g_detail_word[g_cfg.detail & 3],
-            g_cfg.native ? "native" : "svga", g_cfg.diff, g_cfg.laps, g_cfg.speech, g_cfg.music);
+            g_cfg.rows ? rows_word(g_cfg.rows) : "native", g_cfg.diff, g_cfg.laps, g_cfg.speech, g_cfg.music);
     fprintf(f, "display=%s\n", g_cfg.display ? "fullscreen" : "window");
     fprintf(f, "volume_cd=%d\nvolume_fx=%d\nvolume_mu=%d\n", g_cfg.vol_cd, g_cfg.vol_fx, g_cfg.vol_mu);
     for (int k = 0; k < 6; k++) if (g_cfg_key[k][0]) fprintf(f, "%s=%s\n", g_cfg_key_word[k], g_cfg_key[k]);
@@ -672,7 +677,7 @@ static void res_init(void)
         controls_init(key);
     }
     const char *rs = getenv("OS_RES");
-    g_native = rs ? !strcmp(rs, "native") : g_cfg.native;
+    g_res_rows = rs ? (!strcmp(rs, "native") ? 0 : -1) : g_cfg.rows;
     /* the high set's flat artwork must be there (every copy of either game has it) */
     static const char *need[] = {
         "build/dec/GAME/GAMEH.FNT", "build/dec/GAME/GAMEH.SPR", "build/dec/GAME/IMPLET_H.PKC",
@@ -1802,16 +1807,19 @@ static void gpu_send_materials(void)
     free(mat); free(off);
 }
 
-/* M3: the size the card draws the scene at -- RES NATIVE the window's 4:3 part, else fb's own
-   (OS_GPURES=native|<w>x<h>|<times fb's>, a test, over both) */
+/* M3: the size the card draws the scene at -- the window's 4:3 part, with RES's rows if it has more
+   (OS_RES=svga: fb's own; OS_GPURES=native|<w>x<h>|<times fb's>, a test, over both) */
 static int g_gpu_rw, g_gpu_rh;
 static void scene_size(int *w, int *h)
 {
     const char *r = getenv("OS_GPURES");
     int a = 0, b = 0;
     *w = FB_W; *h = FB_H;
-    if (!r && !g_native) return;
-    if (!r || !strcmp(r, "native")) gpu_area(&a, &b);
+    if (!r && g_res_rows < 0) return;
+    if (!r || !strcmp(r, "native")) {
+        gpu_area(&a, &b);
+        if (!r && g_res_rows > 0 && g_res_rows < b) { a = (int)((double)a * g_res_rows / b + 0.5); b = g_res_rows; }
+    }
     else if (sscanf(r, "%dx%d", &a, &b) != 2) { a = FB_W * atoi(r); b = FB_H * atoi(r); }
     if (a >= 64 && b >= 40 && a <= 8192 && b <= 8192) { *w = a; *h = b; }
 }
@@ -4087,7 +4095,7 @@ static float  g_lap_time, g_last_lap, g_best_lap;
 /*
  * RECORDS, THE PLAYER'S NAME, WHAT IS UNLOCKED (build/decomp/records.c).
  * The game keeps these in CONFIG\CHOICE.DAT (0x460 bytes at 0x203c0); the
- * port keeps its own text file, openscreamer.records, and never touches the
+ * port keeps its own text file, screamer-remastered.records, and never touches the
  * game's.  Per track (0x50 bytes from 0x2042c and from 0x2060c): five best
  * laps and five best race totals, each with a three-letter name; the
  * defaults are 180 s and 900 s under the name "GRA" (0x1bbb8).
@@ -4126,7 +4134,7 @@ static void save_load(void)
             g_save.t[t].lap[i] = 180.0f; g_save.t[t].total[i] = 900.0f;
             strcpy(g_save.t[t].lap_name[i], "GRA"); strcpy(g_save.t[t].total_name[i], "GRA");
         }
-    FILE *f = fopen("openscreamer.records", "r");
+    FILE *f = fopen("screamer-remastered.records", "r");
     if (!f) return;
     char name[8], line[128];
     int level, seen, bullet;
@@ -4150,7 +4158,7 @@ static void save_load(void)
 
 static void save_write(void)
 {
-    FILE *f = fopen("openscreamer.records", "w");
+    FILE *f = fopen("screamer-remastered.records", "w");
     if (!f) return;
     fprintf(f, "%s %d %d %d %d\n", g_save.name, g_save.level, g_save.seen, g_save.bullet, g_save.intro);
     for (int t = 0; t < 6; t++)
@@ -4178,7 +4186,7 @@ static int record_put(float *time, char name[][4], int *rpl, float value)       
 static int replay_write(const char *file, int track);
 static void replay_name(char *file, size_t n, int track, int number)
 {
-    snprintf(file, n, "openscreamer.replays/replay%d%d.rpl", track, number);
+    snprintf(file, n, "screamer-remastered.replays/replay%d%d.rpl", track, number);
 }
 
 static void records_enter(int track)
@@ -6552,7 +6560,7 @@ static replay_step *g_rec;
  * own recording of the controls with a header of count / car / laps /
  * difficulty / mode / options; the port's is the same idea in its own format
  * -- the two programs' physics are not step for step the same, so neither
- * could play the other's -- and in its own directory, openscreamer.replays.
+ * could play the other's -- and in its own directory, screamer-remastered.replays.
  */
 typedef struct { char magic[8]; int track, reverse, car, laps, diff, cheat, steps; } replay_head;
 static int g_rpl_file;                           /* this run only plays a file back */
@@ -6560,7 +6568,7 @@ static int g_rpl_file;                           /* this run only plays a file b
 static int replay_write(const char *file, int track)
 {
     if (!g_rec || g_rpl_n <= 0) return 0;
-    mkdir(os_path("openscreamer.replays"), 0755);
+    mkdir(os_path("screamer-remastered.replays"), 0755);
     FILE *f = fopen(file, "wb");
     if (!f) return 0;
     replay_head h = { "OSRPL01", track, g_reverse, g_spec_now, g_total_laps,
@@ -6631,7 +6639,7 @@ static void champ_darken(int x0, int y0, int w, int h);
  * MUSICn.HMP for a music card -- what is there plays.  GOG's copy has the disc as an image, so
  * the CD's songs are what its players hear.  The port: the disc's track when there is one
  * (cdaudio.c: a file track_NN, or the image), else the FM chip's; music_fm=1 in
- * openscreamer.cfg, the FM chip's always.  0 stops either.
+ * screamer-remastered.cfg, the FM chip's always.  0 stops either.
  */
 static int g_song_cd;          /* the song playing is the CD's */
 static void song_play(int n)
@@ -8605,7 +8613,7 @@ typedef struct { char name[24]; int gearbox, kmh, grip, accel; } menu_car;
 static menu_car g_menu_car[MENU_CARS];
 static int      g_nmenu_car;
 static char     g_menu_track[12][24];             /* 7..12: the same six, driven the other way */
-static char     g_menu_text[80][40];
+static char     g_menu_text[96][40];
 /* 0x287a8 / 0x28726: the last track and the last car that can be chosen */
 static int      g_track_max = 5, g_car_max = 12, g_menu_tick;
 
@@ -8702,11 +8710,11 @@ static void menu_frame(int screen, int pick, float turn, const uint8_t *bg, mesh
  */
 typedef struct { int line, works, *value, max; } menu_item;
 static int g_opt_detail = 2, g_opt_diff = 1, g_opt_laps = 0, g_opt_speech = 1, g_opt_music = 1;
-static int g_opt_gres, g_opt_disp;              /* GRAPHICS: 0 RES NATIVE, 1 SVGA (640 x 400); 1 FULLSCREEN */
+static int g_opt_res, g_opt_disp;               /* DISPLAY: RES, the n-th of g_res_list; 1 FULLSCREEN */
 static int g_opt_filter, g_opt_msaa;            /* GRAPHICS: FILTERING 0 OFF 1 ON; MSAA 0 OFF, 1 2X, 2 4X, 3 8X */
 /* THE PORT'S OWN: with both games found and no -game, the menu starts on a page of two lines that
    chooses the game -- SCREAMER goes on to its intro and menu, SCREAMER 2 to its own (os_select_game);
-   the line lit at first is the game chosen last (openscreamer.cfg game=) */
+   the line lit at first is the game chosen last (screamer-remastered.cfg game=) */
 static const menu_item g_page_game[] = { { 66, 1, NULL, 0 }, { 67, 1, NULL, 0 } };
 #define PAGE_GAME 9
 static const menu_item g_page_main[] = {
@@ -8719,32 +8727,51 @@ static const menu_item g_page_attack[] = {       /* the game's page 3: NEW / RES
     { 24, 1, NULL, 0 }, { 25, 1, NULL, 0 },
 };
 static menu_item g_page_options[] = {            /* the difficulty's highest value is 0x2081c */
-    /* the game's first line is its DETAIL option (how far it draws: see
-       g_far_z); the port adds a fourth value, ULTRA (texts 60..73 are the
-       port's: see menu_texts), and has it on a page of its own, GRAPHICS */
-    { 68, 1, NULL, 0 },
-#define OPT_DIFF 1
+    /* the port's: three pages of its own first, DISPLAY, GRAPHICS (with the game's first line, its
+       DETAIL -- how far it draws: g_far_z -- and a fourth value, ULTRA) and AUDIO (the game's
+       SPEECH and MUSIC); texts 60..95 are the port's: see menu_texts */
+    { 80, 1, NULL, 0 }, { 68, 1, NULL, 0 }, { 81, 1, NULL, 0 },
+#define OPT_DIFF 3
 #define OPT_LINES 6
-    { 8, 1, &g_opt_diff, 2 }, { 13, 1, &g_opt_laps, 3 },
-    { 17, 1, &g_opt_speech, 1 }, { 19, 1, &g_opt_music, 1 }, { 21, 1, NULL, 0 },
+    { 8, 1, &g_opt_diff, 2 }, { 13, 1, &g_opt_laps, 3 }, { 21, 1, NULL, 0 },
 };
-/* THE PORT'S OWN: GRAPHICS -- the picture's size (NATIVE the window's; SVGA 640 x 400, STARTH's),
-   the window or the whole screen, the game's DETAIL, and the card's FILTERING and MSAA (dimmed
-   without the card) */
+/* THE PORT'S OWN: DISPLAY -- RES, the scene's rows on the card (steps up to the screen's own:
+   res_list_make), and the window or the whole screen; GRAPHICS -- the game's DETAIL and the card's
+   FILTERING and MSAA; AUDIO -- the game's SPEECH and MUSIC.  The card's lines are not there without it */
+static menu_item g_page_display[] = { { 82, 1, &g_opt_res, 0 }, { 72, 1, &g_opt_disp, 1 } };
 static menu_item g_page_graphics[] = {
-    { 69, 1, &g_opt_gres, 1 }, { 72, 1, &g_opt_disp, 1 }, { 62, 1, &g_opt_detail, 3 },
+    { 62, 1, &g_opt_detail, 3 },
 #ifdef OS_GPU
     { 74, 1, &g_opt_filter, 1 }, { 76, 1, &g_opt_msaa, 3 },
 #endif
 };
+static const menu_item g_page_audio[] = { { 17, 1, &g_opt_speech, 1 }, { 19, 1, &g_opt_music, 1 } };
 #define PAGE_GRAPHICS  10
-/* the GRAPHICS page's lines: FILTERING and MSAA only with the card's scene */
-static int graphics_lines(void)
+#define PAGE_DISPLAY   11
+#define PAGE_AUDIO     12
+static int card_lines(void)
 {
 #ifdef OS_GPU
-    if (gpu_msaa_max() > 0) return 5;
+    return gpu_msaa_max() > 0;
+#else
+    return 0;
 #endif
-    return 3;
+}
+/* RES's steps: the usual heights under the screen's, and the screen's own (the default) */
+static int g_res_list[8], g_res_n;
+static void res_list_make(SDL_Window *win)
+{
+    static const int step[] = { 480, 720, 1080, 1440, 2160, 2880, 4320 };
+    SDL_DisplayMode m;
+    int top = 1080;
+    if (win && SDL_GetDesktopDisplayMode(SDL_GetWindowDisplayIndex(win), &m) == 0 && m.h >= 240) top = m.h;
+    g_res_n = 0;
+    for (int k = 0; k < 7 && g_res_n < 7; k++) if (step[k] < top) g_res_list[g_res_n++] = step[k];
+    g_res_list[g_res_n++] = top;
+    for (int i = 0; i < g_res_n; i++) snprintf(g_menu_text[82 + i], sizeof g_menu_text[0], "RES %dP", g_res_list[i]);
+    g_page_display[0].max = g_res_n - 1;
+    g_opt_res = g_res_n - 1;                     /* (the screen's own, or the step the settings have) */
+    for (int i = 0; i < g_res_n - 1; i++) if (g_cfg.rows && g_res_list[i] >= g_cfg.rows) { g_opt_res = i; break; }
 }
 static const menu_item g_page_records[] = {      /* the game's page 6: a track's records */
     { 31, 1, NULL, 0 }, { 32, 1, NULL, 0 }, { 33, 1, NULL, 0 }, { 34, 1, NULL, 0 }, { 35, 1, NULL, 0 }, { 36, 1, NULL, 0 },
@@ -8808,7 +8835,7 @@ static void name_draw(const uint8_t *bg, int pos)
  *   Failing shows "LOSER!!" (stage 52); RESUME goes back to the screen
  *   before the race that was lost (0x28c9e), NEW starts again.
  * The game keeps all of it in CONFIG\CHOICE.DAT with its options and
- * records; the port keeps its own small file, openscreamer.champ.
+ * records; the port keeps its own small file, screamer-remastered.champ.
  */
 typedef struct { int kind, league, race, text, next, pic, font, need; } champ_stage;
 typedef struct { int stage, prev, car, failed; int pos[6], pts[6]; float time[6]; } champ_state;
@@ -8837,7 +8864,7 @@ static champ_stage champ_stage_at(int s)
 
 static void champ_save(void)
 {
-    FILE *f = fopen("openscreamer.champ", "w");
+    FILE *f = fopen("screamer-remastered.champ", "w");
     if (!f) return;
     fprintf(f, "%d %d %d %d\n", g_ch.stage, g_ch.prev, g_ch.car, g_ch.failed);
     for (int i = 0; i < 6; i++) fprintf(f, "%d %d %f\n", g_ch.pos[i], g_ch.pts[i], g_ch.time[i]);
@@ -8853,7 +8880,7 @@ static void champ_new(void)
 static int champ_load(void)
 {
     champ_new();
-    FILE *f = fopen("openscreamer.champ", "r");
+    FILE *f = fopen("screamer-remastered.champ", "r");
     if (!f) return 0;
     int ok = fscanf(f, "%d %d %d %d", &g_ch.stage, &g_ch.prev, &g_ch.car, &g_ch.failed) == 4;
     for (int i = 0; ok && i < 6; i++) ok = fscanf(f, "%d %d %f", &g_ch.pos[i], &g_ch.pts[i], &g_ch.time[i]) == 3;
@@ -9364,8 +9391,6 @@ static int menu_run(int *track, int *car)
     strcpy(g_menu_text[66], "SCREAMER");         /* (the port's: the page that chooses the game, both being there) */
     strcpy(g_menu_text[67], "SCREAMER 2");
     strcpy(g_menu_text[68], "GRAPHICS");         /* (the port's: its page of the picture's settings, PAGE_GRAPHICS) */
-    strcpy(g_menu_text[69], "RES NATIVE");
-    strcpy(g_menu_text[70], "RES SVGA");         /* (STARTH's 640 x 400) */
     strcpy(g_menu_text[72], "WINDOW");
     strcpy(g_menu_text[73], "FULLSCREEN");
     strcpy(g_menu_text[74], "FILTERING OFF");
@@ -9374,6 +9399,8 @@ static int menu_run(int *track, int *car)
     strcpy(g_menu_text[77], "MSAA 2X");
     strcpy(g_menu_text[78], "MSAA 4X");
     strcpy(g_menu_text[79], "MSAA 8X");
+    strcpy(g_menu_text[80], "DISPLAY");          /* (the port's pages: RES and WINDOW / FULLSCREEN; ... */
+    strcpy(g_menu_text[81], "AUDIO");            /*  ... SPEECH and MUSIC; 82.. RES's steps, res_list_make) */
     car_spec specs[CAR_SPECS_MAX];
     int nspec = cars_dtr_load(specs, CAR_SPECS_MAX, "build/dec/GEN/CARS.DTR");
     if (g_nmenu_car > nspec) g_nmenu_car = nspec;
@@ -9408,7 +9435,7 @@ static int menu_run(int *track, int *car)
     Uint64 last_t = 0;                  /* (the fine clock: whole milliseconds jitter on a fast screen) */
     int screen = 0, pick[2] = { 0, 0 }, loaded_screen = -1, loaded_pick = -1;
     /* pages 5 and 6 are the championship: NEW / RESUME, and its stage screens */
-    int page = 0, sel[11] = { 0 }, mode = 1, resume = 0, tick = 0;
+    int page = 0, sel[PAGE_AUDIO + 1] = { 0 }, mode = 1, resume = 0, tick = 0;
     if (os_both_games() && !getenv("OS_GAME_CHOSEN")) { page = PAGE_GAME; sel[PAGE_GAME] = g_cfg.game == 2; }
     static uint8_t bg_champ[FB_MAXW * FB_MAXH];
     static uint32_t pal_champ[256];
@@ -9436,7 +9463,6 @@ static int menu_run(int *track, int *car)
     int unlock = getenv("OS_UNLOCK") != NULL;
     int name_pos = 0, name_letter = g_save.name[0] - 'A', next_page = -1, next_screen = 0, rec_track = 0, rec_sel = 0;
     /* the options: as the settings file has them, or as the race just left hands them back */
-    g_opt_gres = g_native ? 0 : 1;
     g_opt_disp = g_cfg.display;
     g_opt_detail = g_cfg.detail;
     g_opt_diff = g_cfg.diff; g_opt_laps = g_cfg.laps;
@@ -9449,7 +9475,7 @@ static int menu_run(int *track, int *car)
     g_opt_speech = getenv("OS_FROM_RACE_OPTS") ? (getenv("OS_NOSPEECH") ? 0 : 1) : g_cfg.speech;
     g_opt_music = getenv("OS_FROM_RACE_OPTS") ? (getenv("OS_NOMUSIC") ? 0 : 1) : g_cfg.music;
     if (getenv("OS_NOMUSIC") && !getenv("OS_FROM_RACE_OPTS")) g_opt_music = 0;      /* asked for on the command line */
-    if (getenv("OS_MENU_PAGE")) { page = atoi(getenv("OS_MENU_PAGE")); if (page > PAGE_GRAPHICS) page = PAGE_GRAPHICS; }
+    if (getenv("OS_MENU_PAGE")) { page = atoi(getenv("OS_MENU_PAGE")); if (page > PAGE_AUDIO) page = PAGE_AUDIO; }
     if (getenv("OS_REC_TRACK")) rec_track = atoi(getenv("OS_REC_TRACK")) % 6;
     if (getenv("OS_CHAMP_STAGE")) { champ_new(); g_ch.stage = atoi(getenv("OS_CHAMP_STAGE")); g_ch.pos[0] = 2; g_ch.pts[0] = 7; g_ch.time[0] = 151.37f; }
     float turn = 0.0f;
@@ -9466,9 +9492,10 @@ static int menu_run(int *track, int *car)
     if (!shotfile[0] || getenv("OS_GPUSHOTHI")) {      /* (the card's picture of it too: a window, hidden) */
         win = sys_window(&ren);
         if (!win) return 0;
-        SDL_SetWindowTitle(win, "OpenScreamer");
+        SDL_SetWindowTitle(win, "Screamer Remastered");
         tex = sys_texture(FB_W, FB_H);
         if (!win || !ren || !tex) res_fail("the window for it could not be made");
+        res_list_make(win);
         /* the menu has its own nine samples, MENU.DTR's SOUND_FX (smenu1..9); the
            numbers below are the ones the game passes to 0x1f708 */
         snd_init("build/dec/SOUND", "build/dec/GEN/MENU.DTR");
@@ -9530,8 +9557,8 @@ static int menu_run(int *track, int *car)
 #ifdef OS_GPU
         {   /* GRAPHICS: FILTERING and MSAA where the card has them (their lines are not there otherwise) */
             const int most = gpu_msaa_max();
-            g_page_graphics[4].max = most >= 8 ? 3 : most >= 4 ? 2 : most >= 2 ? 1 : 0;
-            if (most > 0 && g_opt_msaa > g_page_graphics[4].max) g_opt_msaa = g_page_graphics[4].max;
+            g_page_graphics[2].max = most >= 8 ? 3 : most >= 4 ? 2 : most >= 2 ? 1 : 0;
+            if (most > 0 && g_opt_msaa > g_page_graphics[2].max) g_opt_msaa = g_page_graphics[2].max;
         }
 #endif
         if (g_opt_diff > g_page_options[OPT_DIFF].max) g_opt_diff = g_page_options[OPT_DIFF].max;
@@ -9564,9 +9591,9 @@ static int menu_run(int *track, int *car)
             }
         }
         /* the resolution or the display changed: saved, and at once */
-        if (!shotfile[0] && (g_opt_gres == 0) != g_native) {
-            g_native = g_cfg.native = g_opt_gres == 0;
-            cfg_save();
+        if (!shotfile[0] && g_res_rows >= 0 && g_res_n) {
+            const int rows = g_opt_res >= g_res_n - 1 ? 0 : g_res_list[g_opt_res];
+            if (rows != g_res_rows) { g_res_rows = g_cfg.rows = rows; cfg_save(); }
         }
         if (!shotfile[0] && g_opt_disp != g_cfg.display) sys_fullscreen(g_opt_disp);
 #ifdef OS_GPU
@@ -9766,9 +9793,12 @@ static int menu_run(int *track, int *car)
             continue;
         }
         if (page >= 0) {
+            const int card = card_lines();
             const menu_item *items = page == 0 ? g_page_main : page == 1 ? g_page_options : page == PAGE_GRAPHICS ? g_page_graphics
+                                   : page == PAGE_DISPLAY ? g_page_display + !card : page == PAGE_AUDIO ? g_page_audio
                                    : page == 2 ? g_page_special : page == 7 ? g_page_records : page == PAGE_GAME ? g_page_game : g_page_attack;
-            int n = page == 0 ? 5 : page == 1 ? OPT_LINES : page == PAGE_GRAPHICS ? graphics_lines() : page == 2 ? 3 : page == 7 ? 6 : 2;      /* 3 and 5: NEW / RESUME; the game's two */
+            int n = page == 0 ? 5 : page == 1 ? OPT_LINES : page == PAGE_GRAPHICS ? 1 + 2 * card : page == PAGE_DISPLAY ? 1 + card
+                  : page == PAGE_AUDIO ? 2 : page == 2 ? 3 : page == 7 ? 6 : 2;      /* 3 and 5: NEW / RESUME; the game's two */
             memcpy(g_pal, pal_main, sizeof g_pal);
             {
                 /* a page, or a line of it, that is not what the cubes spell: they
@@ -9839,6 +9869,8 @@ static int menu_run(int *track, int *car)
                     }
                     else if (page == 1 && it->line == 21) page = 7;                 /* VIEW RECORDS */
                     else if (page == 1 && it->line == 68) page = PAGE_GRAPHICS;
+                    else if (page == 1 && it->line == 80) page = PAGE_DISPLAY;
+                    else if (page == 1 && it->line == 81) page = PAGE_AUDIO;
                     else if (page == 7) { rec_track = it->line - 31; rec_sel = 0; page = 8; }   /* 0x2c844 */
                     /* every game starts with ENTER YOUR NAME, which then goes on
                        to the screen put aside at 0x1d234 (0x28b80 .. 0x28cba) */
@@ -9855,7 +9887,7 @@ static int menu_run(int *track, int *car)
                     else if (page == 2) { mode = it->line == 29 ? MODE_CONES : MODE_SLALOM; page = -2; next_page = -1; next_screen = 0; }
                     else if (page == 3) { mode = MODE_ATTACK; resume = it->line == 25; page = -2; next_page = -1; next_screen = 0; }
                     break;
-                case SDLK_ESCAPE: snd_play(0); if (page == 3) page = 2; else if (page == 7 || page == PAGE_GRAPHICS) page = 1; else if (page == PAGE_GAME) result = 0;
+                case SDLK_ESCAPE: snd_play(0); if (page == 3) page = 2; else if (page == 7 || page >= PAGE_GRAPHICS) page = 1; else if (page == PAGE_GAME) result = 0;
                                   else if (page != 0) page = 0; else if (os_both_games()) page = PAGE_GAME; else result = 0; break;
                 case SDLK_F11:
                     sys_fullscreen(!(SDL_GetWindowFlags(win) & SDL_WINDOW_FULLSCREEN_DESKTOP));
@@ -10257,8 +10289,8 @@ static int session(int argc, char **argv);
  * parts one after another -- intro, menu, race, menu ... -- each begun from
  * the program's own untouched state (port.h), in the one window.
  *
- *   openscreamer [-d] [-data DIR] [-home DIR]            the game
- *   openscreamer [...] build/dec/MAPn n [--shot ...]     straight into a track (testing)
+ *   screamer-remastered [-d] [-data DIR] [-home DIR]            the game
+ *   screamer-remastered [...] build/dec/MAPn n [--shot ...]     straight into a track (testing)
  */
 int main(int argc, char **argv)
 {
@@ -10348,7 +10380,7 @@ static int loading_show(int track)
 /*
  * THE CHAMPIONSHIP, the port's side (the game's: s2_hooks.c).  What is being driven is kept
  * in a slot that outlives the port's parts; what has been WON -- the leagues and tracks
- * opened, the teams that have their fifth car -- in openscreamer.s2champ.  As the game
+ * opened, the teams that have their fifth car -- in screamer-remastered.s2champ.  As the game
  * starts: league 1 only, the first three tracks of the menu's order (0x128a14 + 3 of
  * them: one more for each of the first three leagues won, the seventh when league 4 has
  * been won with all four teams).  OS_UNLOCK=1 opens everything.
@@ -10377,7 +10409,7 @@ static s2_champ_t *s2_champ(void)
     if (!c) {
         c = os_keep_calloc(1, sizeof *c);                  /* (not calloc: a change of part frees that) */
         if (!c) return NULL;
-        FILE *f = os_fopen("openscreamer.s2champ", "r");
+        FILE *f = os_fopen("screamer-remastered.s2champ", "r");
         if (f) {
             if (fscanf(f, "league %d tracks %d fifth %d %d %d %d", &c->open_league, &c->open_tracks, &c->fifth[0], &c->fifth[1], &c->fifth[2], &c->fifth[3]) != 6)
                 c->open_league = c->open_tracks = c->fifth[0] = c->fifth[1] = c->fifth[2] = c->fifth[3] = 0;
@@ -10391,7 +10423,7 @@ static s2_champ_t *s2_champ(void)
 }
 static void s2_champ_save(const s2_champ_t *c)
 {
-    FILE *f = os_fopen("openscreamer.s2champ", "w");
+    FILE *f = os_fopen("screamer-remastered.s2champ", "w");
     if (!f) return;
     fprintf(f, "league %d tracks %d fifth %d %d %d %d\n", c->open_league, c->open_tracks, c->fifth[0], c->fifth[1], c->fifth[2], c->fifth[3]);
     fclose(f);
@@ -10786,7 +10818,7 @@ static int s2_menu3d(void)
     g_scene = &empty;
     SDL_Window *win = sys_window(&g_s2m_ren);
     if (!win || !g_s2m_ren) return 0;
-    SDL_SetWindowTitle(win, "OpenScreamer");
+    SDL_SetWindowTitle(win, "Screamer Remastered");
     g_s2m_tex = sys_texture(FB_W, FB_H);
     g_s2m_closed = 0; g_s2m_ticks = 0; g_s2m_nmesh = 0; g_s2m_nmlb = 0;
     if (getenv("OS_CULL")) g_cull = atoi(getenv("OS_CULL"));     /* (a test, as in a race) */
@@ -10881,7 +10913,7 @@ static int s2_champ_report(s2_champ_t *c, SDL_Renderer *ren, SDL_Texture *tex, c
  * (0x3e161) sets one: HANDLING, BRAKES, TIRE TYPE (A - Dry, B - Wet, C - Snow), TIRE
  * PRESSURE, FRONT and REAR SUSPENSIONS, five steps each but the tyres' three, then SAVE or
  * EXIT.  The items are the numbers 0, 5, 2, 1, 3, 4 of the six.  The game keeps them in its
- * settings file; the port in openscreamer.s2setup.  (The port's plain page, not the game's
+ * settings file; the port in screamer-remastered.s2setup.  (The port's plain page, not the game's
  * 3D one with the car turning.)
  */
 static int g_s2_setup[4][4][4][6];
@@ -10902,7 +10934,7 @@ static void s2_setups_load(void)
         static const int first[6] = { 2, 2, 0, 2, 2, 2 };
         memcpy(g_s2_setup[t][c][u], first, sizeof first);
     }
-    FILE *f = os_fopen("openscreamer.s2setup", "r");
+    FILE *f = os_fopen("screamer-remastered.s2setup", "r");
     if (!f) return;
     for (int t = 0; t < 4; t++) for (int c = 0; c < 4; c++) for (int u = 0; u < 4; u++) {
         int six[6];
@@ -10914,7 +10946,7 @@ static void s2_setups_load(void)
 }
 static void s2_setups_save(void)
 {
-    FILE *f = os_fopen("openscreamer.s2setup", "w");
+    FILE *f = os_fopen("screamer-remastered.s2setup", "w");
     if (!f) return;
     for (int t = 0; t < 4; t++) for (int c = 0; c < 4; c++) for (int u = 0; u < 4; u++) {
         const int *six = g_s2_setup[t][c][u];
@@ -11020,7 +11052,7 @@ static int s2_menu(void)
     SDL_Renderer *ren = NULL;
     SDL_Window *win = sys_window(&ren);
     if (!win) return 0;
-    SDL_SetWindowTitle(win, "OpenScreamer");
+    SDL_SetWindowTitle(win, "Screamer Remastered");
     SDL_Texture *tex = sys_texture(FB_W, FB_H);
     if (!fb) fb = malloc(sizeof *fb * FB_MAXW * FB_MAXH);
     if (!ren || !tex || !fb) return 0;
@@ -12588,7 +12620,7 @@ static int session(int argc, char **argv)
                 char title[160];
                 if (mode == DRIVE)
                     snprintf(title, sizeof title,
-                             "OpenScreamer   %s   %3.0f km/h   gear %d   %4.0f rpm   POS %d/%d"
+                             "Screamer Remastered   %s   %3.0f km/h   gear %d   %4.0f rpm   POS %d/%d"
                              "   lap %d  %.1f s  (last %.2f, best %.2f)   %s%s   t=%d",
                              g_race_clock < RACE_HOLD ? "GET READY" : "DRIVE",
                              drive_kmh(&g_pc), g_pc.gear, g_pc.rpm,
@@ -12599,7 +12631,7 @@ static int session(int argc, char **argv)
                              g_pat);
                 else
                 snprintf(title, sizeof title,
-                         "OpenScreamer   %s%s   t=%d of %d   lap %.0f%%"
+                         "Screamer Remastered   %s%s   t=%d of %d   lap %.0f%%"
                          "      (TAB changes mode)",
                          mode_name[mode], overhead ? " + from above" : "",
                          at, r->count, 100.0f * (float)at / (float)r->count);

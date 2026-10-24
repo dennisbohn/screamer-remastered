@@ -183,7 +183,7 @@ Tried first with a scratch data directory (Screamer 1's files, `MAP1L` swapped f
 62,958), cars, props, moving scenery (`MAPn.PTH`).
 
 **In the port:**
-- `-game 1|2` (`$OPENSCREAMER_GAME`), else by what is found: `./screamer`, `./screamer2`
+- `-game 1|2` (`$SCREAMER_GAME`), else by what is found: `./screamer`, `./screamer2`
   (and `build/dec2`, …); `-data DIR` is recognised by its files (`GFX/MAP1L01.DAT` = Screamer
   2). `os_game()`. Both found and no option: Screamer 1 for now, `os_both_games()` is set
   for the menu that will choose. The start-up check has its own list for Screamer 2
@@ -1558,7 +1558,7 @@ Not read: the menu's league and custom screens, the ghost's file, the records' f
     taken from it -- without it the ghost stood still).
   - Kept when the race is left with the player's car done and FIRST (`0x2b2a8`): the first
     race always, then only a race that beat the ghost. The port's file:
-    `openscreamer.ghosts/s2attack<track>.rpl` (its own layout; 7000 frames at most, 6.5 min).
+    `screamer-remastered.ghosts/s2attack<track>.rpl` (its own layout; 7000 frames at most, 6.5 min).
   - The race screen (`0x45882`, `0x456fb`): POSITION and the bar only while the ghost is
     shown (`0x11f0a4`). Only the player's car knocks obstacles (`0x2a639`).
   - With no ghost to show (none kept for the track, or GHOST CAR off) the second car is still
@@ -1586,7 +1586,7 @@ Not read: the menu's league and custom screens, the ghost's file, the records' f
   lap times by kind and track. A race starts with the lists' first as BEST TOTAL / BEST LAP;
   at its end every human car that finished goes in, and the end's screen shows the list,
   six rows, the player's row lit, moving up to it (`0x4746a`, `0x48980`). The port's file:
-  `openscreamer.s2records`. NOT read: what the lists hold before anybody has driven (empty
+  `screamer-remastered.s2records`. NOT read: what the lists hold before anybody has driven (empty
   here), the name's entry (here "YOU"), the replay kept with each row.
 - **The clocks' figures were too far apart** and BEST LAP ran off the screen: after a byte 1
   figures stand in columns of the widest letter plus the routine's "space" argument (-1 in
@@ -1620,7 +1620,7 @@ Not read: the menu's league and custom screens, the ghost's file, the records' f
 - **Built**: `OS_S2GAME=2`. The plain menu has CHAMPIONSHIP (the track's line becomes the
   league), a TEAM line, and the locks as above (`OS_UNLOCK=1` opens everything). A league's
   state is kept in a slot between the port's parts (`s2_champ_t` in `main.c`), what has been
-  won in `openscreamer.s2champ`. After each race the report (`s2_champ_report`): the port's
+  won in `screamer-remastered.s2champ`. After each race the report (`s2_champ_report`): the port's
   plain screen with the game's lines -- the game's own is its 3D menu's, with the teams'
   badges. The race's end screen is the game's layout.
 - Tests: `OS_S2REPORTTEST=n` (the report after race n; 9 = after the last, won),
@@ -1688,7 +1688,7 @@ Not read: the menu's league and custom screens, the ghost's file, the records' f
 - **Built (the port's plain menu, not the 3D one):** a SET-UP line (Standard, Custom 1-4)
   for the championship, time attack and free run with cars 1-4; ENTER on a Custom opens CAR
   CUSTOMIZATION (the game's words; the plain menu's font has capitals only, so "B - WET");
-  SAVE keeps it in `openscreamer.s2setup` (the port's own file). The race gets the six as
+  SAVE keeps it in `screamer-remastered.s2setup` (the port's own file). The race gets the six as
   `OS_S2SETUP=a,b,c,d,e,f` (`s2_race_start` puts them in the player's entry for modes 2, 4,
   8). Checked: Custom 0 0 2 0 0 0 (snow tyres, all soft) on England in time attack: 2700
   units behind the standard set-up after 150 frames; arcade unchanged; the recorded races
@@ -2019,7 +2019,7 @@ materials, objects, what the engine's list holds).
   (none: the defaults), 0x331dc writes it as the loop ends -- the only two places; word i is
   kept as (v + i*0x1050c) ^ i. Both are the game's own, converted; the library's fopen / fread /
   fwrite / fclose (0xb6aac 0xb6b60 0xb6e97 0xb6d3b) are answered in `s2_menu_hooks.h`: the file
-  is the port's `openscreamer.s2choice` in its home, the game's bytes as they are (any other
+  is the port's `screamer-remastered.s2choice` in its home, the game's bytes as they are (any other
   name is refused; there is none). The save's mode "wb" came out of the converter as a host
   pointer (`tools/s2c_fix.txt` @331dc). Also answered: abs (0xb73c7), itoa (0xb743d, the best
   times' page). **The port's own:** the game's save is also made before every race from the
@@ -2035,12 +2035,12 @@ materials, objects, what the engine's list holds).
     went back to the menu with zeros there, now takes them from the menu's kept block
     (`s2m_race_settings`) and starts in that view (0x2e1f3: 3, 4, 6, else 2).
   - **The best times** are one set of lists in the game; a race from the game's menu starts with
-    the menu's (`s2m_race_records`), and the port's own `openscreamer.s2records` follows them
+    the menu's (`s2m_race_records`), and the port's own `screamer-remastered.s2records` follows them
     (the plain menu reads that).
   - Checked: a fresh home writes 33,244 bytes that decode to the defaults; a name changed in
     the file survives a run's load and save; a league race (`OS_S2ROBOT`, which now gives the
     car back once it has done its laps, so that its time counts) leaves the league table and
-    MIL's 1:23.389 in the championship's 1-lap England list; with `openscreamer.s2records`
+    MIL's 1:23.389 in the championship's 1-lap England list; with `screamer-remastered.s2records`
     deleted, a second sitting's race adds its time beside it.
 - **The race's whole record from the menu** (2026-10-14): 0x339e7 builds the record
   0x130c48.. from GAME SETTINGS and the pages -- damage 0x130d54 (DAMAGES, OFF by default; the
@@ -2249,7 +2249,7 @@ materials, objects, what the engine's list holds).
   `(name, 1)` the frames from `0x2ecb0`) and runs it as a replay. Nothing in a race draws random
   numbers but the sparks (`0x2aeb9`), so a race is the same again from its frames. In the port,
   written by hand from that: `s2_rpl_write` / `s2_rpl_name` / `s2_rpl_load` (s2_hooks.c), the
-  files in `openscreamer.s2replays/` (`S2REPLAYS/` in `os_path`), byte for byte the game's;
+  files in `screamer-remastered.s2replays/` (`S2REPLAYS/` in `os_path`), byte for byte the game's;
   `s2m_race_standin` loads one for VIEW REPLAY; `tools/s2c_fix.txt` @38540 a third way back
   (`s2m_resume` 3, label `s2_after_replay`). `OS_S2REPLAYLOG` says what is written and read;
   `OS_S2REPLAYTEST=<frames> OS_S2REPLAYFILE=1` replays the test race from its file. Checked: the
@@ -2618,7 +2618,7 @@ rows taken one each: `build/w/dos/unscale.py`; 0 of 256000 differ); the name pag
 background, name and cursor the same, its turning 3D at another moment; the race screen's
 labels and figures at the same places; Screamer 1's high resolution (two tracks, the menu)
 unchanged; low resolution unchanged (the quick check and the 13 menu pages). `-res low|high`
-chooses it for one run; the one kept is still Screamer's OPTIONS (`openscreamer.cfg`).
+chooses it for one run; the one kept is still Screamer's OPTIONS (`screamer-remastered.cfg`).
 
 **A RESOLUTION line in the game's settings (2026-10-16, Danik: "add a switch for resolution in
 game settings, above 'detail level'").** The port's own, on the options page (`0x420c0`): its
@@ -2627,7 +2627,7 @@ routine's own stack in the game's memory and drawn as the game draws its lines),
 game's DETAIL LEVEL .. MUSIC, 9 VIEW HIGH SCORES; the ten lines fit the page's box in both
 sizes. ENTER on it: the game's settings saved (`0x331dc`), the menu left by the game's own exit
 (`0xae662`) with `s2m_res_change` set; `s2_menu3d` (main.c) keeps the choice in
-`openscreamer.cfg` (`resolution=`), sets it for the run and begins the menu again
+`screamer-remastered.cfg` (`resolution=`), sets it for the run and begins the menu again
 (`os_go`) with `OS_S2MGOTO=options`: the menu's loop (`0x38540`) then goes straight to the
 options page, starts the music as its first page would, and the cursor is on RESOLUTION.
 Checked both ways (the settings file and the picture's size after it), DETAIL LEVEL still
@@ -2646,7 +2646,7 @@ Screamer 2 no longer asks. Tests: `OS_S2MKEYSAFTER` = the keys after the restart
 now records the menu's sound too, a frame's worth a frame; `OS_SNDLOG` prints the CD's volume.
 Danik again: a start with high saved fell back to low ("the last start in it did not get as far as
 a picture") and then "cannot open /MAP0OPP.SPL". The start-up mark (`starting_high=1` in
-openscreamer.cfg, cleared by the first picture shown: `res_started`) was never cleared by Screamer
+screamer-remastered.cfg, cleared by the first picture shown: `res_started`) was never cleared by Screamer
 2's menu, so the hand-over to the attract race found it and took high for broken; and `res_fail`'s
 restart handed `os_go` the very buffers `os_next` writes into (they came out empty). Now
 `s2m_show` clears the mark, and `res_fail` copies its arguments first. Checked on the hidden X
@@ -2659,7 +2659,7 @@ Danik's decision of 2026-10-13 ("with no option and both games' data found, a me
 / Screamer 2"), now built: "do the game chooser. -game 1 starts screamer 1". With both folders found
 and no `-game` (`os_both_games()`), Screamer's menu starts on a page of its own (`PAGE_GAME`, 9) of two
 lines, SCREAMER and SCREAMER 2 (texts 66, 67, the port's), its lettered cubes as every page of that
-menu; the line lit at first is the game chosen last (`game=2` in openscreamer.cfg). ENTER: the choice
+menu; the line lit at first is the game chosen last (`game=2` in screamer-remastered.cfg). ENTER: the choice
 kept, `OS_GAME_CHOSEN`, and the program begun again (`os_go`) -- SCREAMER with its intro and menu as
 ever, SCREAMER 2 after `os_select_game(2)` (port.c: the data folder becomes the other one found, its
 DATA / GFX / ANIMS folders found again, every container read so far let go -- the two games share

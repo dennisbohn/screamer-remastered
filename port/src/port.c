@@ -17,11 +17,11 @@
  *   - the ends of the program's own statics, for putting them back between
  *     its parts: the names MinGW's linker gives them.  SDL is a DLL, so its
  *     statics are not among them;
- *   - where the program is, where settings go (%APPDATA%\openscreamer), the
+ *   - where the program is, where settings go (%APPDATA%\screamer-remastered), the
  *     environment, mkdir;
  *   - files are opened as they are (no translation of line ends), as on Linux;
  *   - there is no console: what the program prints goes to the terminal it
- *     was started from, or else to openscreamer.log in the settings folder.
+ *     was started from, or else to screamer-remastered.log in the settings folder.
  */
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -90,6 +90,53 @@ static int is_file(const char *dir, const char *name)
     struct stat st;
     snprintf(p, sizeof p, "%s/%s", dir, name);
     return stat(p, &st) == 0;
+}
+
+static int copy_file(const char *from, const char *to)
+{
+    FILE *a = fopen(from, "rb");
+    if (!a) return 0;
+    FILE *b = fopen(to, "wb");
+    if (!b) { fclose(a); return 0; }
+    char buf[65536];
+    size_t n;
+    int ok = 1;
+    while ((n = fread(buf, 1, sizeof buf, a)) > 0) if (fwrite(buf, 1, n, b) != n) { ok = 0; break; }
+    fclose(a);
+    if (fclose(b) != 0) ok = 0;
+    return ok;
+}
+
+/* THE NAME CHANGED (2026-10-24: OpenScreamer -> Screamer Remastered): the files the program kept
+   under the old name -- openscreamer.cfg, .records, .replays/ ... -- copied once to the new name,
+   the old ones left as they are; only while the new settings file is not there yet */
+static void home_take_over(const char *from, const char *to)
+{
+    if (is_file(to, "screamer-remastered.cfg") || !is_dir(from)) return;
+    DIR *d = opendir(from);
+    if (!d) return;
+    int n = 0;
+    struct dirent *e;
+    while ((e = readdir(d)) != NULL) {
+        if (strncmp(e->d_name, "openscreamer.", 13)) continue;
+        char a[1400], b[1400];
+        snprintf(a, sizeof a, "%s/%s", from, e->d_name);
+        snprintf(b, sizeof b, "%s/screamer-remastered.%s", to, e->d_name + 13);
+        if (!is_dir(a)) { n += copy_file(a, b); continue; }
+        mkdir(b, 0755);                          /* (replays and ghosts: one folder each, files only) */
+        DIR *sub = opendir(a);
+        struct dirent *f;
+        while (sub && (f = readdir(sub)) != NULL) {
+            if (f->d_name[0] == '.') continue;
+            char fa[1700], fb[1700];
+            snprintf(fa, sizeof fa, "%s/%s", a, f->d_name);
+            snprintf(fb, sizeof fb, "%s/%s", b, f->d_name);
+            n += copy_file(fa, fb);
+        }
+        if (sub) closedir(sub);
+    }
+    closedir(d);
+    if (n) printf("settings: %d files taken over from %s\n", n, from);
 }
 
 /*
@@ -250,7 +297,7 @@ static FILE *packed_open(const char *rel)
         long got = method ? lzw_decode(p->bytes + off, stored, buf, real)
                           : (memcpy(buf, p->bytes + off, (size_t)(stored < real ? stored : real)), stored < real ? stored : real);
         if (got != real) {
-            fprintf(stderr, "openscreamer: %s is damaged in the game's files (%ld of %ld bytes)\n", rel, got, real);
+            fprintf(stderr, "screamer-remastered: %s is damaged in the game's files (%ld of %ld bytes)\n", rel, got, real);
             free(buf);
             return NULL;
         }
@@ -354,7 +401,7 @@ static void game_check(void)
     static const char *const high2[] = { "MAP1H01", "MAP2H01", "MAP3H01", "MAP4H01", "MAP5H01", "MAP6H01", "MAP7H01", NULL };
     char bad[1200] = "", path[1024], file[32];
     int files = 0, nbad = 0, packs = 0;
-    printf("OpenScreamer %s\n", OS_VERSION);
+    printf("Screamer Remastered %s\n", OS_VERSION);
     printf("Checking %s data in %s ... ", K->game == 2 ? "Screamer 2" : "Screamer", K->data);
     fflush(stdout);
     for (int set = 0; set < 3; set++) {
@@ -381,7 +428,7 @@ static void game_check(void)
     if (nbad) {
         printf("FAILED\n");
         fflush(stdout);
-        fprintf(stderr, "openscreamer: %d of the game's files cannot be used:%s\n"
+        fprintf(stderr, "screamer-remastered: %d of the game's files cannot be used:%s\n"
                         "Say where a complete copy of the game is with -data DIR (the folder that holds its\n"
                         "DATA and GFX folders), or put it next to the program as \"%s\".\n", nbad, bad,
                         K->game == 2 ? "screamer2" : "screamer");
@@ -389,7 +436,7 @@ static void game_check(void)
         {
             char text[2600];
             snprintf(text, sizeof text, "%d of the game's files are missing or damaged:%.1800s\n\nPut a complete copy of the "
-                     "original Screamer (the folder that holds DATA and GFX) next to openscreamer.exe, named \"screamer\".", nbad, bad);
+                     "original Screamer (the folder that holds DATA and GFX) next to screamer-remastered.exe, named \"screamer\".", nbad, bad);
             win_fatal(text);
         }
 #endif
@@ -411,7 +458,7 @@ int os_exists(const char *path)
 static void os_help(const char *me)
 {
     printf(
-"OpenScreamer " OS_VERSION " -- Screamer (1995) for Linux.  It needs a copy of the original game:\n"
+"Screamer Remastered " OS_VERSION " -- a remaster of Screamer (1995).  It needs a copy of the original game:\n"
 "put the game's folder next to the program as \"screamer\" (or name it with -data).\n"
 "\n"
 "USAGE\n"
@@ -423,21 +470,21 @@ static void os_help(const char *me)
 "OPTIONS\n"
 "  -h, --help     this text\n""  --version      the version, and nothing else\n"
 "  -data DIR      your copy of the game: the folder that holds its DATA and GFX folders\n"
-"                 default: $OPENSCREAMER_DATA, ./screamer, <program>/screamer\n"
+"                 default: $SCREAMER_DATA, ./screamer, <program>/screamer\n"
 "                 (a folder of files already unpacked with tools/extract.sh works too)\n"
 "  -game N        1 = Screamer, 2 = Screamer 2.  Default: the one whose files are found\n"
 "                 (./screamer, ./screamer2); both found: a first page chooses (the last\n"
 "                 choice lit); -data DIR names either game's folder\n"
-"  -res svga|native  640 x 400 for this run, or native: the graphics card draws Screamer's races\n"
-"                 at the window's size; the one kept is RES in OPTIONS / GRAPHICS (openscreamer.cfg)\n"
+"  -res svga|native  for this run: 640 x 400, or as many rows as the window has; the one kept is\n"
+"                 RES in OPTIONS / DISPLAY (resolution= in screamer-remastered.cfg)\n"
 #ifdef OS_GPU
 "  -renderer gpu|software  who draws the pictures this run: the graphics card (the default,\n"
-"                 if it has OpenGL 4.5) or the program itself (renderer= in openscreamer.cfg;\n"
+"                 if it has OpenGL 4.5) or the program itself (renderer= in screamer-remastered.cfg;\n"
 "                 a start that died on the card sets it to software)\n"
 #endif
 "  -home DIR      where settings and saves are kept\n"
-"                 default: $OPENSCREAMER_HOME, this directory if it already holds them,\n"
-"                 else ~/.config/openscreamer\n"
+"                 default: $SCREAMER_HOME, this directory if it already holds them,\n"
+"                 else ~/.config/screamer-remastered\n"
 "  -d             developer mode: walk / fly round the track, inspection keys\n"
 "\n"
 "\"build/dec/MAPn\" is only a name for track n: it is found in the game's folder, wherever that is.\n"
@@ -446,16 +493,16 @@ static void os_help(const char *me)
 "IN THE MENU\n"
 "  UP / DOWN      choose a line           LEFT / RIGHT  change an option, the car, the track\n"
 "  ENTER          go on                   ESC           back (on the first page: leave)\n"
-"  OPTIONS has: GRAPHICS -- RES (NATIVE: the window's size; SVGA 640x400 as the original),\n"
-"  WINDOW / FULLSCREEN, DETAIL (LOW, MID, HI as the original; ULTRA draws much\n"
-"  further), FILTERING and MSAA (the graphics card's smoothing; OFF is the original's look) --\n"
-"  then difficulty, laps, speech, music, records.\n"
+"  OPTIONS has: DISPLAY -- RES (the rows the graphics card draws with, up to the screen's) and\n"
+"  WINDOW / FULLSCREEN; GRAPHICS -- DETAIL (LOW, MID, HI as the original; ULTRA draws much\n"
+"  further), FILTERING and MSAA (the card's smoothing; OFF is the original's look); AUDIO --\n"
+"  speech, music; then difficulty, laps, records.\n"
 "\n"
 "IN A RACE\n"
 "  UP / DOWN      accelerate / brake      LEFT / RIGHT  steer\n"
 "  ALT / CTRL     gear up / down (cars with manual transmission); A / Z do the same\n"
 "                 (these six are the game's own CONFIG/CONTROLS.CFG; to change one, a line\n"
-"                 in openscreamer.cfg: key_accelerate= key_brake= key_left= key_right=\n"
+"                 in screamer-remastered.cfg: key_accelerate= key_brake= key_left= key_right=\n"
 "                 key_gear_up= key_gear_down=  with a key's name, such as  key_brake=Space)\n"
 "  C              next view              F1 bumper cam  F2 cockpit  F3 near chase  F4 far chase\n"
 "  M              radar zoom             P   the CD player (music and volumes)\n"
@@ -468,16 +515,16 @@ static void os_help(const char *me)
 "  F5             FPS counter            F11 full screen    F12 screenshot (shot_NNN.ppm)\n"
 "\n"
 "FILES IT KEEPS (in the home directory)\n"
-"  openscreamer.cfg       settings        openscreamer.records   best times, name, what is unlocked\n"
-"  openscreamer.champ     championship    openscreamer.replays/  replays of record races\n"
-"  openscreamer.ghosts/   time-attack ghosts\n"
+"  screamer-remastered.cfg       settings        screamer-remastered.records   best times, name, what is unlocked\n"
+"  screamer-remastered.champ     championship    screamer-remastered.replays/  replays of record races\n"
+"  screamer-remastered.ghosts/   time-attack ghosts\n"
 "\n"
 "THE MUSIC is the CD's audio tracks, as in the original.  GOG's copies have the CD as an\n"
 "  image (SCREAM.gog / GAME.GOG with its cue sheet SCREAM.DAT / GAME.DAT): it is played from\n"
 "  there.  Files named track_02.ogg .. track_09.ogg (.mp3 or .wav do as well) in the game's\n"
 "  folder's music folder (or the game's folder, or the home's music folder) go first.\n"
 "  Screamer with no CD's tracks: its MIDI songs through the FM chip (music_fm=1 in\n"
-"  openscreamer.cfg: those always).\n"
+"  screamer-remastered.cfg: those always).\n"
 "\n"
 "SWITCHES FOR ONE RUN (environment variables)\n"
 "  OS_RES=low|high|native    OS_DETAIL=0..3    OS_LAPS=n    OS_DIFF=0..3    OS_CAR=n\n"
@@ -488,7 +535,7 @@ static void os_help(const char *me)
 
 #ifdef _WIN32
 /* WINDOWS: a program without a console prints nowhere.  Started from a
-   terminal, what it prints goes there; else to openscreamer.log in the
+   terminal, what it prints goes there; else to screamer-remastered.log in the
    settings folder.  If the game is not found, a box says so. */
 static int win_console;
 static void win_attach(void)
@@ -507,7 +554,7 @@ static void win_output(void)
 {
     char log[900];
     if (win_console) return;
-    snprintf(log, sizeof log, "%s/openscreamer.log", K->home);
+    snprintf(log, sizeof log, "%s/screamer-remastered.log", K->home);
     if (freopen(log, "w", stdout)) freopen(log, "a", stderr);
     setvbuf(stdout, NULL, _IONBF, 0); setvbuf(stderr, NULL, _IONBF, 0);
 }
@@ -515,7 +562,7 @@ static void win_output(void)
 static void win_fatal(const char *text)
 {
     if (!win_console && !getenv("SDL_VIDEODRIVER"))
-        MessageBoxA(NULL, text, "OpenScreamer", MB_OK | MB_ICONERROR);
+        MessageBoxA(NULL, text, "Screamer Remastered", MB_OK | MB_ICONERROR);
 }
 #endif
 
@@ -540,7 +587,7 @@ void os_init(int argc, char **argv)
     win_attach();
 #endif
     for (int i = 1; i < argc; i++)
-        if (!strcmp(argv[i], "--version")) { printf("OpenScreamer %s\n", OS_VERSION); exit(0); }
+        if (!strcmp(argv[i], "--version")) { printf("Screamer Remastered %s\n", OS_VERSION); exit(0); }
     for (int i = 1; i < argc; i++)
         if (!strcmp(argv[i], "--help") || !strcmp(argv[i], "-h") || !strcmp(argv[i], "-help")) {
             const char *me = strrchr(argv[0], '/');
@@ -549,8 +596,8 @@ void os_init(int argc, char **argv)
         }
     K = calloc(1, sizeof *K);
     if (!K) exit(1);
-    const char *data = getenv("OPENSCREAMER_DATA"), *home = getenv("OPENSCREAMER_HOME");
-    int game = getenv("OPENSCREAMER_GAME") ? atoi(getenv("OPENSCREAMER_GAME")) : 0;    /* 0: whichever is found */
+    const char *data = getenv("SCREAMER_DATA"), *home = getenv("SCREAMER_HOME");
+    int game = getenv("SCREAMER_GAME") ? atoi(getenv("SCREAMER_GAME")) : 0;    /* 0: whichever is found */
     K->argv[K->argc++] = argv[0];
     for (int i = 1; i < argc && K->argc < 15; i++) {
         if (!strcmp(argv[i], "-d")) K->dev = 1;
@@ -600,13 +647,13 @@ void os_init(int argc, char **argv)
     K->game = game ? game : 1;
     game_dirs();
     if (home) snprintf(K->home, sizeof K->home, "%s", home);
-    else if (is_file(".", "openscreamer.cfg") || is_file(".", "openscreamer.records") || is_file(".", "openscreamer.champ"))
+    else if (is_file(".", "screamer-remastered.cfg") || is_file(".", "screamer-remastered.records") || is_file(".", "screamer-remastered.champ"))
         strcpy(K->home, ".");
     else {
         const char *xdg = getenv("XDG_CONFIG_HOME"), *h = getenv("HOME");
 #ifdef _WIN32
         char appdata[700];
-        xdg = getenv("APPDATA");                  /* WINDOWS: %APPDATA%\openscreamer */
+        xdg = getenv("APPDATA");                  /* WINDOWS: %APPDATA%\screamer-remastered */
         if (xdg && *xdg) {
             snprintf(appdata, sizeof appdata, "%s", xdg);
             for (char *c = appdata; *c; c++) if (*c == '\\') *c = '/';
@@ -614,16 +661,22 @@ void os_init(int argc, char **argv)
         }
         h = NULL;
 #endif
-        if (xdg && *xdg) snprintf(K->home, sizeof K->home, "%s/openscreamer", xdg);
-        else if (h && *h) snprintf(K->home, sizeof K->home, "%s/.config/openscreamer", h);
+        if (xdg && *xdg) snprintf(K->home, sizeof K->home, "%s/screamer-remastered", xdg);
+        else if (h && *h) snprintf(K->home, sizeof K->home, "%s/.config/screamer-remastered", h);
         else strcpy(K->home, ".");
     }
     if (strcmp(K->home, ".")) {
         char up[768];
+        const int fresh = !is_dir(K->home);
         snprintf(up, sizeof up, "%s", K->home);
         char *s = strrchr(up, '/');
         if (s && s != up) { *s = 0; mkdir(up, 0755); }
         mkdir(K->home, 0755);
+        if (fresh && !home) {                   /* the first start: an OpenScreamer folder beside it is taken over */
+            char old[768];
+            snprintf(old, sizeof old, "%.740s/openscreamer", up);
+            home_take_over(old, K->home);
+        }
     }
 #ifdef _WIN32
     win_output();
@@ -631,12 +684,12 @@ void os_init(int argc, char **argv)
     if (!is_dir(K->data)) {
         printf("Checking game data ... FAILED\n");
         fflush(stdout);
-        fprintf(stderr, "openscreamer: no game at \"%s\".\n"
+        fprintf(stderr, "screamer-remastered: no game at \"%s\".\n"
                         "Say where your copy of Screamer is with -data DIR (the folder that holds its DATA and\n"
                         "GFX folders), or put it next to the program as \"screamer\".\n", K->data);
 #ifdef _WIN32
-        win_fatal("The game was not found.\n\nOpenScreamer needs a copy of the original Screamer: put the game's folder "
-                  "(the one that holds DATA and GFX) next to openscreamer.exe, named \"screamer\".");
+        win_fatal("The game was not found.\n\nScreamer Remastered needs a copy of the original Screamer: put the game's folder "
+                  "(the one that holds DATA and GFX) next to screamer-remastered.exe, named \"screamer\".");
 #endif
         exit(1);
     }
@@ -695,16 +748,16 @@ const char *os_path(const char *path)
     char *out = buf[at++ & 7];
     if (!strncmp(path, "build/dec/", 10)) snprintf(out, 1024, "%s/%s", K->data, path + 10);
     else if (!strcmp(path, "build/dec")) snprintf(out, 1024, "%s", K->data);
-    else if (!strncmp(path, "openscreamer.", 13)) snprintf(out, 1024, "%s/%s", K->home, path);
+    else if (!strncmp(path, "screamer-remastered.", 20)) snprintf(out, 1024, "%s/%s", K->home, path);
     else if (!strncmp(path, "S2REPLAYS/", 10)) {          /* Screamer 2's replays (the game's REPLAYS folder, its files as they are) */
-        snprintf(out, 1024, "%s/openscreamer.s2replays", K->home);
+        snprintf(out, 1024, "%s/screamer-remastered.s2replays", K->home);
         mkdir(out, 0755);
-        snprintf(out, 1024, "%s/openscreamer.s2replays/%s", K->home, path + 10);
+        snprintf(out, 1024, "%s/screamer-remastered.s2replays/%s", K->home, path + 10);
     }
     else if (!strncmp(path, "REPLAYS/", 8)) {            /* time-attack ghosts: the port's own, not the game's directory */
-        snprintf(out, 1024, "%s/openscreamer.ghosts", K->home);
+        snprintf(out, 1024, "%s/screamer-remastered.ghosts", K->home);
         mkdir(out, 0755);
-        snprintf(out, 1024, "%s/openscreamer.ghosts/%s", K->home, path + 8);
+        snprintf(out, 1024, "%s/screamer-remastered.ghosts/%s", K->home, path + 8);
     }
     else return path;
     return out;

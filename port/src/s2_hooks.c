@@ -729,7 +729,7 @@ static void s2m_race_record(void)
 }
 
 /* and the best times: in the game one set of lists, in its settings file (0x1290bc..); a race
-   from the game's menu starts with the menu's (the port's own file, openscreamer.s2records,
+   from the game's menu starts with the menu's (the port's own file, screamer-remastered.s2records,
    follows them: it is what the port's plain menu reads) */
 static void s2m_race_records(uint8_t *r, uint32_t at, uint32_t size)
 {
@@ -1093,7 +1093,7 @@ static void s2_line_load(const char *file)
  * two cars start side by side (0x2f519: 1000 to either side by the car's number, no row
  * behind), so the ghost has to be the car it was: with a ghost of car n the player gets car
  * 1 - n, and the two change sides every time the ghost is beaten.  The port keeps the same
- * things in a file of its own, openscreamer.ghosts/s2attack<track>.rpl.
+ * things in a file of its own, screamer-remastered.ghosts/s2attack<track>.rpl.
  */
 int s2_mode = 1;                           /* the kind of game: 1 arcade, 2 championship, 4 time attack, 8 free run */
 int s2_ghost_on = 1;                       /* TIME ATTACK GHOST CAR */
@@ -1105,7 +1105,7 @@ static int s2_me;                          /* the player's car: 0 but against a 
 
 static void s2_ghost_name(char *out, size_t size, int track)
 {
-    snprintf(out, size, "REPLAYS/s2attack%d.rpl", track);          /* (os_fopen: the port's openscreamer.ghosts) */
+    snprintf(out, size, "REPLAYS/s2attack%d.rpl", track);          /* (os_fopen: the port's screamer-remastered.ghosts) */
 }
 
 /* before the cars are loaded: is there a ghost for this track, and which car is it */
@@ -1186,7 +1186,7 @@ static s2_replay_t *s2_replay_kept(void)
 }
 
 /*
- * THE REPLAYS AS FILES (the game's folder REPLAYS; the port's openscreamer.s2replays, the files
+ * THE REPLAYS AS FILES (the game's folder REPLAYS; the port's screamer-remastered.s2replays, the files
  * byte for byte the game's).  0x326e2(name) writes <name>.rpl: 0x27c bytes from 0x1330d4 -- the
  * frames' count (0x1330cc), the player's car (0x11f0d0), both players' controls (0x127708,
  * 0x1277c8: 0xa8 each), the race's record as it was at the start (0x130d6c, copied from
@@ -1405,7 +1405,7 @@ int s2_results(s2_result *r)
  * that finished into both (time attack: only the player's, and always the 3-lap list) and
  * leaves the car's row, or -1, at 0x13305c[car] -- the end's screen shows the list with
  * that row lit.  The game keeps them in its settings file; the port in a file of its own,
- * openscreamer.s2records (the lists as they are, after a mark).  Before anybody has driven
+ * screamer-remastered.s2records (the lists as they are, after a mark).  Before anybody has driven
  * (0x32d53, no settings file) every row is 3599.999 by "MIL", replay 0, +0xb4 = the row & 3,
  * +0xf0 = 0 -- and both players' names (0x1289f4, 0x1289f8) are "MIL" too.
  */
@@ -1428,7 +1428,7 @@ static uint8_t *s2_records(void)
                 memcpy(r + l * 300u + 0x3c + k * 4u, "MIL", 4);
                 memcpy(r + l * 300u + 0xb4 + k * 4u, &row, 4);
             }
-        f = os_fopen("openscreamer.s2records", "rb");
+        f = os_fopen("screamer-remastered.s2records", "rb");
         if (f) {
             uint8_t *in = malloc(S2_REC_SIZE);
             if (in && fread(mark, 1, 8, f) == 8 && !memcmp(mark, "OS2REC1", 8) && fread(in, 1, S2_REC_SIZE, f) == S2_REC_SIZE) memcpy(r, in, S2_REC_SIZE);
@@ -1488,7 +1488,7 @@ int s2_records_enter(void)
     }
     memcpy(r, MP(S2_REC_AT), S2_REC_SIZE);
     {
-        FILE *f = os_fopen("openscreamer.s2records", "wb");
+        FILE *f = os_fopen("screamer-remastered.s2records", "wb");
         if (f) { fwrite("OS2REC1", 1, 8, f); fwrite(r, 1, S2_REC_SIZE, f); fclose(f); }
     }
     return I32(0x13305c + 4 * (uint32_t)I32(0x11f0d0));

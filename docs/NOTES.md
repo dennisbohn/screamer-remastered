@@ -558,8 +558,8 @@ port/src/fmchip.c, nuked/                    the sound card's FM chip in softwar
 
 ```bash
 cmake -S port -B port/build && cmake --build port/build
-port/build/openscreamer build/dec/MAP1 1                      # window, track 1
-port/build/openscreamer build/dec/MAP5 5 --shot out.ppm 300   # headless PPM frame
+port/build/screamer-remastered build/dec/MAP1 1                      # window, track 1
+port/build/screamer-remastered build/dec/MAP5 5 --shot out.ppm 300   # headless PPM frame
 ```
 
 Arguments are positional: `datadir track [--shot file] [t] [camera-height] [layer]`.
@@ -603,7 +603,7 @@ kerbs are climbed and bridges overhead ignored; off the edge of the modelled wor
 keep your height instead of falling for ever. **There is no wall collision yet** — you
 can walk through walls and cars. That belongs with the driving physics.
 
-`SDL_VIDEODRIVER=dummy OS_DEMO=400 port/build/openscreamer build/dec/MAP1 1` is the
+`SDL_VIDEODRIVER=dummy OS_DEMO=400 port/build/screamer-remastered build/dec/MAP1 1` is the
 headless self-test of WALK: it walks forward 400 frames, jumps once, and prints feet /
 ground / eye height. Use it after touching the movement code, since I cannot press keys.
 
@@ -921,7 +921,7 @@ first answer wins, in the game's cell, piece and face order. Not ported at all: 
 sideways slide's sign is settled -- the game is lop-sided there, see section 30.
 
 **Testing without a keyboard:** `SDL_VIDEODRIVER=dummy OS_DRIVE_DEMO=3000
-port/build/openscreamer build/dec/MAP1 1` — a crude robot driver laps the track and the
+port/build/screamer-remastered build/dec/MAP1 1` — a crude robot driver laps the track and the
 console prints speed, gear, rpm, height and wall hits each second (a lap of track 1
 takes it about 53 s). Run it after touching `drive.c` or the car/track glue in `main.c`.
 
@@ -1557,7 +1557,7 @@ HMI is replaced by a 32-voice STEREO SDL mixer. From the game:
   too. **GOG's copy has the disc as an image** (`SCREAM.gog`, its cue sheet `SCREAM.DAT`:
   tracks 2-8, 4:53 to 5:18 each) and GOG's DOSBox has no music card set, so its players hear
   the CD. Port (2026-10-24, `song_play`, `cdaudio.c`): the CD's track from the image (or a
-  file `track_NN`), else MUSICn.HMP through the FM chip (`music_fm=1` in `openscreamer.cfg`:
+  file `track_NN`), else MUSICn.HMP through the FM chip (`music_fm=1` in `screamer-remastered.cfg`:
   always the chip); the drive's volume is the CD master as MSCDEX takes it (vol / 0x8000).
   `MUSICn.HMP` = "HMIMIDIP013195": `+0x30` tracks, `+0x38` ticks per
   second (120), tracks from `0x388`, each `[number, length incl. these 12 bytes,
@@ -1579,7 +1579,7 @@ commentator speaks, with the time. `OS_NOSOUND=1` switches sound off.
 
 ### 18. MENUS — first piece: track and car selection (2026-10-08)
 
-`port/build/openscreamer` **with no arguments** now opens track selection, then car
+`port/build/screamer-remastered` **with no arguments** now opens track selection, then car
 selection, then starts the race (it re-runs itself with the track on the command line
 and the car in `OS_CAR`; leaving the race with ESC comes back the same way). With
 arguments it behaves as before. Picture: `build/png/port_menu_selection.png`.
@@ -1759,7 +1759,7 @@ nothing. Texts = the `#`-separated blocks of `CHAMP.TXT` (0–3 column heads, 4 
 championship state (`0x203d8`..`0x20428`), and per track (0x50 bytes from `0x2042c`) five
 best laps and (from `0x2060c`) five best totals with 3-letter names; defaults 180 s /
 900 s. `0x2d348` draws the VIEW RECORDS page.
-**Port:** its own state file `openscreamer.champ` (not the game's); menu and race are
+**Port:** its own state file `screamer-remastered.champ` (not the game's); menu and race are
 two runs of the program, the result comes back in `OS_CHAMP_RESULT=pos,time,timeover`;
 a finished championship race leaves by itself after the end screen's 5 s (ENTER cannot
 skip the end screen anywhere: Danik, from the original).
@@ -1836,7 +1836,7 @@ AGAIN? (`0x1fe86`: the question is skipped only when flags & 0x1020 is clear).
 **ESC in a race = the question, not the menu** (Danik, from the original, 2026-10-09;
 same code): in every mode but the network game leaving a race brings PLAY AGAIN? up;
 the port now does this (ESC again, or NO, leaves).
-**Port:** its own `openscreamer.records` (never CHOICE.DAT); `OS_UNLOCK=1` opens
+**Port:** its own `screamer-remastered.records` (never CHOICE.DAT); `OS_UNLOCK=1` opens
 everything (twelve tracks, thirteen cars) without saving; `OS_RECORDTEST=1` lets the robot's race be entered (delete the
 file afterwards); `OS_MENU_PAGE=-2` name, `7` list, `8` + `OS_REC_TRACK=n` a track's
 records, for `OS_MENU_SHOT`. Not done: replays kept with records.
@@ -1895,7 +1895,7 @@ per-frame lists (`0x15af8`, `0x15b34`, `0x15b70`). Nothing to port.
 
 **A race starts in the near chase** (port now too).
 
-**Replays in files.** Port: `openscreamer.replays/replay<track><n>.rpl` (own format: a
+**Replays in files.** Port: `screamer-remastered.replays/replay<track><n>.rpl` (own format: a
 header with track / reversed / car / laps / difficulty / option word / steps, then the
 steps), written when a 3-lap total enters the records — n = the lowest number no other
 total of that track has, as in `0x2e9bd` — and marked "R" in VIEW RECORDS; ENTER there
@@ -1951,7 +1951,7 @@ with GAMEL.FNT the lines overlap), song slot 0.
 player's car is moved out of the world and only opponents, props, scenery and the
 credits are stepped. `openscreamer` with no arguments runs it first (`OS_INTRO_DONE` in
 the environment afterwards; `OS_NOINTRO=1` skips it), the menu's pages left alone for
-30 s go back to it. The track counter is the fifth number of `openscreamer.records`'s
+30 s go back to it. The track counter is the fifth number of `screamer-remastered.records`'s
 first line and goes on one per intro (the game: one per visit to the menu).
 `OS_INTRO_TEST=1` saves eight frames `intro_N.ppm`, 2.5 s apart, and stops;
 `OS_INTRO_LOG=1` prints every change of car, post and close-in.
@@ -2006,7 +2006,7 @@ name `MENU2L` (the port had the cars on MENU2L).
 **Not checked by eye:** the fades and the pull-back have not been seen by
 me (stills only). `OS_MENU_KEYS="ESRS…"` presses menu keys by itself (U D L R, E enter,
 X escape, S save `menu_script_N.ppm`), `OS_MENU_STEPS=n` runs n frames of 0.04 s before
-an `OS_MENU_SHOT`. **The name screen WRITES the name: back up `openscreamer.records`
+an `OS_MENU_SHOT`. **The name screen WRITES the name: back up `screamer-remastered.records`
 before a scripted run.**
 
 ### 27. HIGH RESOLUTION AND THE SETTINGS FILE (2026-10-09; `build/png/port_hires.png`)
@@ -2035,7 +2035,7 @@ both shown 4:3), `g_s` = 1 or 2; the lens is `128 × g_s`; everything flat keeps
 positions are pixels); `res_name()` turns the L before a file's extension into H;
 the backdrop is drawn doubled. A font's `height` is in 320×200 rows, `rows` its own.
 So the hi-res LAYOUT is the low one doubled — not read from the hi-res program.
-**`openscreamer.cfg`** (text): `resolution=low|high`, `difficulty`, `laps`, `speech`,
+**`screamer-remastered.cfg`** (text): `resolution=low|high`, `difficulty`, `laps`, `speech`,
 `music` — the options are remembered now (they were not). Changing the resolution line
 saves and restarts the menu in it. **Fall-back to low** (`res_init`, `res_fail`): the H
 files missing; no memory / no window; or `starting_high=1` still in the file — written
@@ -2073,7 +2073,7 @@ track. Play leaves; eject runs the disc-change texts (GAME.TXT 16–18); ESC lea
 Port: the seven songs are the disc's tracks 2-8 (from GOG's image of the disc, section 17's
 MUSIC); with no disc the seven MIDI songs stand for them and CD and MU both act on those;
 eject does nothing, one press of − / + = one stroke; the volumes are in
-`openscreamer.cfg` (`volume_cd` / `_fx` / `_mu`) and `snd_masters()` applies them.
+`screamer-remastered.cfg` (`volume_cd` / `_fx` / `_mu`) and `snd_masters()` applies them.
 `OS_CDTEST=n` opens it with the cursor on button n in a robot run.
 
 **The pass.** Of the game-logic range (`0x10000`–`0x30000`) 115 functions (19 KB) had
@@ -2119,11 +2119,11 @@ DYNAMICALLY — a statically linked SDL would have its statics inside the range 
 put back. `.bss` is 84 MB because the meshes are static arrays; zeroing it takes a few
 milliseconds per change of part.
 **Directories** (`os_path()` rewrites the names the code has always used):
-`build/dec/…` → the DATA directory: `-data DIR`, `$OPENSCREAMER_DATA`, else the first
+`build/dec/…` → the DATA directory: `-data DIR`, `$SCREAMER_DATA`, else the first
 that exists of `./build/dec`, `<program dir>/data`, `<program dir>/../../build/dec`,
-`./data`. `openscreamer.*` → the HOME directory: `-home DIR`, `$OPENSCREAMER_HOME`, else
+`./data`. `openscreamer.*` → the HOME directory: `-home DIR`, `$SCREAMER_HOME`, else
 the current directory when it already holds the port's files, else
-`~/.config/openscreamer`. `REPLAYS/…` (time-attack ghosts, which the port used to put
+`~/.config/screamer-remastered`. `REPLAYS/…` (time-attack ghosts, which the port used to put
 in the GAME's directory) → `<home>/openscreamer.ghosts/`.
 **Keys.** `F1`–`F4` the four views again, `F5` FPS counter, `F11`, `F12`.
 (The `O` / `SHIFT+O` drawing-distance keys and `draw_distance=` are gone since 2026-10-11:
@@ -2207,7 +2207,7 @@ wrong, and only text.
   pixel within one part in 10000 of the depth already there, from ANOTHER object, goes to
   the object whose own position is nearer the camera (`g_obj_d2[]`).  About 100 pixels a
   picture change elsewhere (seams).  Do not "fix" such overlaps in the data.
-- `openscreamer --help` (port.c `os_help`): usage, options, keys, files, the everyday switches.
+- `screamer-remastered --help` (port.c `os_help`): usage, options, keys, files, the everyday switches.
 - **The lawn under the road** (Danik: a wedge of grass over road and rail in Lake Valley's
   chevron bend, `build/png/port_lake_valley_carpet_ab.png`).  Every track has ground-fill
   objects named `akk…` (tap = carpet, acq = water, mare, spiag, dir, tr, sper…), 80-250
@@ -2330,7 +2330,7 @@ over 0x1ff to full.  How the driving code takes them:
 - gears (`0x18e0a`): one a press (latch at player `+0x140`).
 **Port** (`controls.c`): keys from the game's file (a PC scan code's twin works too: both
 Ctrls, both Alts, arrows = number pad), or `key_accelerate=` / `key_brake=` / `key_left=`
-/ `key_right=` / `key_gear_up=` / `key_gear_down=` lines in `openscreamer.cfg` with SDL's
+/ `key_right=` / `key_gear_up=` / `key_gear_down=` lines in `screamer-remastered.cfg` with SDL's
 key names (`key_brake=Space`); A / Z stay gear keys when nobody else has them.
 **Game controller: the port's own layout** (the file's joystick records are a DOS
 game-port calibration): left stick = steering axis, triggers = accelerate / brake axes,
@@ -2503,9 +2503,9 @@ SDL (section 29) and the framework's is static; the 50 Hz physics against 59.64 
   a container's bytes is a self-deleting temporary file (no `fopencookie`); the statics put
   back between the program's parts are MinGW's `__data_start__` .. `__bss_end__` -- so **SDL2
   must stay a DLL** (linked in, its statics would be among them: `-static` was tried by
-  mistake and took `libSDL2.a`); `%APPDATA%\openscreamer`; `_putenv_s`; files opened binary
+  mistake and took `libSDL2.a`); `%APPDATA%\screamer-remastered`; `_putenv_s`; files opened binary
   (`_set_fmode`) as on Linux; no console (`-mwindows`): output to the terminal it was started
-  from, else `openscreamer.log` in the settings folder, and a message box when the game's
+  from, else `screamer-remastered.log` in the settings folder, and a message box when the game's
   files are missing.  `long` is 32 bits there: nothing minded.
   Tested under wine 11: the data check; a robot lap with telemetry the same as Linux to the
   last digit; race and menu pictures byte-identical to Linux; four menu -> race -> menu rounds

@@ -675,7 +675,7 @@ static uint32_t FUN_0004fca9(uint32_t name, ...)
 /* the library's files: fopen, fread, fwrite, fclose.  The game opens one file through them,
    "\config\choice.dat" -- the settings, the championship, the best times (0x32d53 reads it as
    the menu starts, 0x331dc writes it as the menu ends; each word i stored as (v + i*0x1050c) ^ i).
-   The port keeps it in its home as openscreamer.s2choice, the game's bytes as they are; any other
+   The port keeps it in its home as screamer-remastered.s2choice, the game's bytes as they are; any other
    name is refused (said once), which the game takes as "no file". */
 #define S2M_CFILES 4
 static FILE *s2m_cfile[S2M_CFILES];
@@ -690,7 +690,7 @@ static uint32_t FUN_000b6aac(uint32_t name, uint32_t mode)
     }
     for (int k = 0; k < S2M_CFILES; k++)
         if (!s2m_cfile[k]) {
-            s2m_cfile[k] = os_fopen("openscreamer.s2choice", m);
+            s2m_cfile[k] = os_fopen("screamer-remastered.s2choice", m);
             return s2m_cfile[k] ? (uint32_t)k + 1 : 0;
         }
     return 0;

@@ -1,7 +1,7 @@
 #!/bin/sh
-# The Windows x86-64 release: openscreamer.exe built with MinGW-w64 on Linux,
+# The Windows x86-64 release: screamer-remastered.exe built with MinGW-w64 on Linux,
 # SDL2.dll beside it, a README and the licences, as
-#   dist/openscreamer-<version>-windows-x86_64.zip
+#   dist/screamer-remastered-<version>-windows-x86_64.zip
 # usage: tools/release_windows.sh      (needs x86_64-w64-mingw32-gcc, cmake, curl)
 # SDL2's own Windows package for MinGW (headers, import library, SDL2.dll) is
 # fetched into build/release-windows.
@@ -9,7 +9,7 @@ set -e
 cd "$(dirname "$0")/.."
 ROOT=$PWD
 V=$(sh tools/version.sh)
-NAME=openscreamer-$V-windows-x86_64
+NAME=screamer-remastered-$V-windows-x86_64
 SDL=SDL2-2.32.10
 W=build/release-windows
 
@@ -30,10 +30,10 @@ set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
 EOT
 PKG_CONFIG_LIBDIR=$ROOT/$W PKG_CONFIG_PATH= cmake -S port -B $W/game -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_TOOLCHAIN_FILE=$ROOT/$W/toolchain.cmake > $W/cmake.log
-cmake --build $W/game -j"$(nproc)" 2>&1 | grep -E ' error|warning: implicit|Built target openscreamer'
-x86_64-w64-mingw32-strip $W/game/openscreamer.exe
+cmake --build $W/game -j"$(nproc)" 2>&1 | grep -E ' error|warning: implicit|Built target screamer-remastered'
+x86_64-w64-mingw32-strip $W/game/screamer-remastered.exe
 
-cp $W/game/openscreamer.exe "$P/bin/SDL2.dll" "dist/$NAME/"
+cp $W/game/screamer-remastered.exe "$P/bin/SDL2.dll" "dist/$NAME/"
 cp LICENSE "dist/$NAME/LICENSE.txt"
 cp port/src/nuked/opl3.h "dist/$NAME/LICENSE-nuked-opl3.txt"
 cp "$ROOT/$W/$SDL/LICENSE.txt" "dist/$NAME/LICENSE-SDL2.txt"
@@ -41,5 +41,5 @@ sed "s/@VERSION@/$V/" tools/release_windows_readme.txt | sed 's/$/\r/' > "dist/$
 rm -f "dist/$NAME.zip"
 (cd dist && python3 -m zipfile -c "$NAME.zip" "$NAME")
 echo "what it needs:"
-x86_64-w64-mingw32-objdump -p "dist/$NAME/openscreamer.exe" | grep "DLL Name"
+x86_64-w64-mingw32-objdump -p "dist/$NAME/screamer-remastered.exe" | grep "DLL Name"
 ls -la "dist/$NAME.zip"

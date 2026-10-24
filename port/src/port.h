@@ -11,9 +11,9 @@
 
 /*
  * PATHS.  The code names its files as it always has -- "build/dec/..." for
- * the game's extracted data, "openscreamer.*" and "REPLAYS/..." for what the
+ * the game's extracted data, "screamer-remastered.*" and "REPLAYS/..." for what the
  * port writes -- and os_path() turns those into real places:
- *   the DATA directory   -data DIR, or $OPENSCREAMER_DATA, or the first of
+ *   the DATA directory   -data DIR, or $SCREAMER_DATA, or the first of
  *                        ./screamer, <program's directory>/screamer,
  *                        <program's directory>/../../screamer, ./build/dec,
  *                        <program's directory>/data,
@@ -21,9 +21,9 @@
  *                        It is either a copy of the GAME (its DATA and GFX
  *                        folders: the containers are read as they are) or a
  *                        directory of files unpacked by tools/extract.sh.
- *   the HOME directory   -home DIR, or $OPENSCREAMER_HOME, or the current
+ *   the HOME directory   -home DIR, or $SCREAMER_HOME, or the current
  *                        directory when it already holds the port's files,
- *                        or ~/.config/openscreamer
+ *                        or ~/.config/screamer-remastered
  * Anything else is left as it is.
  */
 const char *os_path(const char *path);

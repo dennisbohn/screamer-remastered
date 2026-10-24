@@ -1,4 +1,4 @@
-OpenScreamer @VERSION@ for Linux (x86-64)
+Screamer Remastered @VERSION@ for Linux (x86-64)
 =======================================
 
 A reimplementation of Screamer (Graffiti / Virgin Interactive, 1995) and
@@ -10,17 +10,17 @@ reading the original programs.
   Screamer 2: the game's own 3D menu, arcade, the championship's four
               leagues, time attack and its ghost, the seven tracks with
               their weather, set-ups, damage, replays and best times, the
-              CD's music; 320x200 or 640x400. Not in it: two players, the
+              CD's music, at 640x400. Not in it: two players, the
               network game, the 65,000-colour versions.
 
-Beta. Please report problems at https://github.com/ItsDanik/openscreamer
+Beta. Please report problems at https://github.com/dennisbohn/screamer-remastered
 
 YOU NEED THE ORIGINAL GAMES
-  OpenScreamer contains no part of either game. Both are still sold: buy
+  Screamer Remastered contains no part of either game. Both are still sold: buy
   them, and copy each game's folder -- the one that holds DATA and GFX --
   next to the program, named "screamer" and "screamer2":
 
-      openscreamer
+      screamer-remastered
       screamer/DATA/GEN.DAT ...
       screamer/GFX/GAME.DAT ...
       screamer2/DATA/GAME.DAT ...
@@ -48,11 +48,11 @@ YOU NEED SDL2
   (Steam's and most games' installations already brought it.)
 
 RUN
-      ./openscreamer
+      ./screamer-remastered
   from a terminal, in this folder. If it says "permission denied":
-      chmod +x openscreamer
+      chmod +x screamer-remastered
 
-  ./openscreamer --help   lists the options, the keys, the game controller's
+  ./screamer-remastered --help   lists the options, the keys, the game controller's
                           buttons and the files it keeps.
 
 KEYS
@@ -71,15 +71,15 @@ KEYS
 
   Screamer 2: R (or M) the mirror; ESC pauses, with the CD player.
 
-  OPTIONS in Screamer's menu has the picture's size (320x200 or 640x400),
-  the detail, difficulty, laps, speech and music; GAME SETTINGS in Screamer
-  2's options room has its own (RESOLUTION, above DETAIL LEVEL).
+  OPTIONS in Screamer's menu has GRAPHICS (the picture's size, window or full
+  screen, detail, filtering, MSAA), difficulty, laps, speech and music; GAME
+  SETTINGS in Screamer 2's options room has its own.
 
 FILES IT KEEPS
-  ~/.config/openscreamer/   settings, best times, championship, replays,
+  ~/.config/screamer-remastered/   settings, best times, championship, replays,
                             time-attack ghosts (or -home <folder>)
 
 LICENCE
   GPL-3.0 (LICENSE.txt). The FM chip is Nuked OPL3 by Nuke.YKT,
   LGPL-2.1 or later (LICENSE-nuked-opl3.txt).
-  Source: https://github.com/ItsDanik/openscreamer
+  Source: https://github.com/dennisbohn/screamer-remastered
