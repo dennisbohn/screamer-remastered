@@ -126,8 +126,16 @@ at fb's own size too (OS_RES=svga), with the flat things over it as for M3.
   so that a later face wins a tie, as `!(mine < there)`.
 - **Palette numbers to the end.** The targets are an `R8UI` picture, the software's depth
   (`R32F`) and the owner (`R16I`); the backdrop is painted by the CPU as before and is the
-  picture's first content. Afterwards `fb`, `zb` and `idb` are read back and the HUD is drawn
-  on them as ever, so fades, the `SMG` blends and the 2D darkenings stay exact.
+  picture's first content. The scene then **stays on the card** (since 2026-10-24): the HUD is
+  drawn into `fb` as ever, every routine that puts a pixel down marks it (`LAY_PUT`, `LAY_RUN`),
+  darkenings over the scene are noted (`lay_dark`), and the card shows its scene wherever no flat
+  thing has drawn (`gpu_overlay`, the flat layer: 0 the scene, 1 fb, 1 + k the scene darkened by
+  the k-th table) -- at fb's own size too, which is the exact way's picture all the same. `fb`,
+  `zb` and `idb` are read back only for the tests' pictures and the developer's keys
+  (`gpu_readback`; `OS_READBACK=0|1` over it); F12 saves the card's picture. Without the
+  read-back the CPU and the card no longer wait for each other: at 2880 x 2160 the CPU's work is
+  0.58 ms a picture whatever the settings, the card's 0.58 ms (both off) or 1.8 ms (FILTERING with
+  8X MSAA).
 - **Depth rules.** Pass 0 (everything solid) uses factors on the card's depth: a carpet counts
   as twice as far (half its depth), and objects get a hair's nudge by their distance rank so
   that on a tie the one nearer the camera wins (objects at the same distance get the same

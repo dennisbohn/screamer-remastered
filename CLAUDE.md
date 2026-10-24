@@ -18,6 +18,10 @@ What changed from OpenScreamer (2026-10-23..24; the details in `docs/GPU.md` and
   2026-10-24, Dennis: no AI-made or painted cockpits -- a new Screamer is out, too touchy; the
   loader for them, the card's layer at the screen's resolution and the smoothed needles were built
   and taken out again (commits f8f9b65, 862fb8d).
+- The scene stays on the card: no read-back into fb (only for tests and `-d`, `gpu_readback`,
+  `OS_READBACK`); the flat layer comes from the drawing routines' marks alone (`LAY_PUT` /
+  `LAY_RUN` -- a new routine that writes into fb must mark its pixels, or the card's scene covers
+  them); MSAA shaded once a pixel, keyed edges by alpha to coverage.
 - The picture between two 50 Hz steps (`lerp_apply`), OPTIONS as DISPLAY / GRAPHICS / AUDIO, the CD
   music from GOG's disc image, the program's own name and home (`screamer-remastered`, the old
   OpenScreamer home taken over once).

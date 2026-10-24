@@ -391,10 +391,33 @@ static SDL_Window *sys_window(SDL_Renderer **ren)
     return win;
 }
 
+/* the card's scene read back into fb, zb and idb: only for the tests' pictures and the developer's
+   keys (each part asks again: gpu.c's statics start afresh) */
+static int readback_wanted(void)
+{
+    static const char *const tests[] = { "OS_SHOTEVERY", "OS_SHOTAT", "OS_MENU_SHOT", "OS_INTRO_TEST", "OS_INSPECT",
+                                         "OS_GPUCHECK", "OS_DEMO", "OS_LOAD_SHOT" };
+    if (getenv("OS_READBACK")) return atoi(getenv("OS_READBACK")) != 0;     /* (a test: 0 as when playing, 1 always) */
+    for (size_t i = 0; i < sizeof tests / sizeof tests[0]; i++) if (getenv(tests[i])) return 1;
+    return os_dev();
+}
+
+/* F12: the picture as shown -- the card's, at its own size, or fb; 1 when fb holds it all */
+static void write_ppm_of(const char *path, const uint8_t *pixels, int rows);
+static int picture_save(const char *name)
+{
+#ifdef OS_GPU
+    if (gpu_active() && !readback_wanted()) { gpu_shot_next(name); return 0; }
+#endif
+    write_ppm_of(name, fb, FB_H);
+    return 1;
+}
+
 static SDL_Texture *sys_texture(int w, int h)
 {
 #ifdef OS_GPU
     gpu_shape(w, h);
+    gpu_readback(readback_wanted());
     if (gpu_active()) return (SDL_Texture *)os_slot(0); /* (a stand-in: the picture goes to the card, gpu_picture) */
 #endif
     if (os_slot(1)) SDL_RenderSetLogicalSize(os_slot(1), w * 3 / 2, h * 9 / 5);   /* (640 x 400: 960 x 720) */
@@ -439,14 +462,15 @@ static void show_pixels(SDL_Texture *tex, const uint8_t *pixels, int rows)
 
 #ifdef OS_GPU
 /*
- * M3: A SCENE THE CARD DREW LARGER THAN fb.  fb holds it as read back (each pixel as the scene is
- * at its middle) and the flat things go over it as ever; as the picture is shown, the card puts
- * its own scene wherever fb still shows the scene -- as drawn, or through the darkenings done
- * since (the radar's window, the dialog, the CD player).  lay_begin keeps the scene, lay_dark
- * darkens a pixel and notes it, lay_end works out every pixel for gpu_overlay.
+ * THE CARD'S SCENE AND THE FLAT THINGS OVER IT.  The scene stays on the card (it is not read back
+ * into fb, gpu_readback); the flat things are drawn into fb as ever, and as the picture is shown
+ * the card puts its own scene wherever no flat thing has drawn -- as drawn, or through the
+ * darkenings done since (the radar's window, the dialog, the CD player).  Every routine that puts
+ * a pixel down marks it (LAY_PUT, LAY_RUN); lay_dark darkens a pixel and notes it; lay_end works
+ * out every pixel for gpu_overlay.
  */
 static int g_lay_want, g_lay_on, g_lay_flip, g_lay_n;
-static uint8_t g_lay_scene[FB_MAXW * FB_MAXH], g_lay_dk[FB_MAXW * FB_MAXH];
+static uint8_t g_lay_dk[FB_MAXW * FB_MAXH];
 /* a flat thing has drawn the pixel (LAY_PUT, LAY_RUN in the routines that put pixels down): its
    own colour, whatever the scene's is -- without it a logo in white over the white of a banner
    was taken for the scene there, and the card's banner showed through */
@@ -461,7 +485,6 @@ static void lay_begin(int flip)                 /* flip: the picture turned over
 {
     g_lay_on = g_lay_want; g_lay_want = 0;
     if (!g_lay_on) return;
-    memcpy(g_lay_scene, fb, FB_BYTES);
     memset(g_lay_dk, 0, (size_t)(FB_W * FB_H));
     memset(g_lay_op, 0, (size_t)(FB_W * FB_H));
     g_lay_n = 0; g_lay_flip = flip;
@@ -477,13 +500,13 @@ static int lay_then(int k, const uint8_t *t)
     return ++g_lay_n;
 }
 
-/* fb's pixel i through the table t (a table that stays put for the picture) */
+/* fb's pixel i through the table t (a table that stays put for the picture); where the scene is,
+   the card's (more than 32 darkenings in one picture: the last ones are not seen) */
 static inline void lay_dark(int i, const uint8_t *t)
 {
-    if (g_lay_on) {
-        const int k = g_lay_dk[i];
-        if (k != 255 && !g_lay_op[i] && fb[i] == (k ? g_lay_lut[k - 1][g_lay_scene[i]] : g_lay_scene[i]))
-            g_lay_dk[i] = (uint8_t)lay_then(k, t);
+    if (g_lay_on && !g_lay_op[i]) {
+        const int k = lay_then(g_lay_dk[i], t);
+        if (k != 255) g_lay_dk[i] = (uint8_t)k;
     }
     fb[i] = t[fb[i]];
 }
@@ -493,9 +516,9 @@ static void lay_end(void)
     if (!g_lay_on) return;
     g_lay_on = 0;
     static uint8_t layer[FB_MAXW * FB_MAXH];
-    for (int i = 0; i < FB_W * FB_H; i++) {          /* (and where fb no longer shows the scene: a flat thing not marked) */
+    for (int i = 0; i < FB_W * FB_H; i++) {
         const int k = g_lay_dk[i];
-        layer[i] = (uint8_t)(g_lay_op[i] || k == 255 || fb[i] != (k ? g_lay_lut[k - 1][g_lay_scene[i]] : g_lay_scene[i]) ? 1 : k ? 1 + k : 0);
+        layer[i] = (uint8_t)(g_lay_op[i] ? 1 : k ? 1 + k : 0);
     }
     gpu_overlay(layer, &g_lay_lut[0][0], g_lay_n, g_lay_flip);
 }
@@ -9784,7 +9807,7 @@ static int menu_run(int *track, int *car)
                 if (ev.type == SDL_QUIT) result = 0;
                 if (ev.type != SDL_KEYDOWN) continue;
                 int key = ev.key.keysym.sym;
-                if (key == SDLK_F12) { write_ppm("menu_page.ppm"); printf("saved menu_page.ppm\n"); }
+                if (key == SDLK_F12) { picture_save("menu_page.ppm"); printf("saved menu_page.ppm\n"); }
                 if (page == 8) {                 /* 0x283f0, 0x284e0 */
                     CHEAT_KEY(key);
                     if (key == SDLK_UP && rec_sel > 0)   { rec_sel--; snd_play(4); }
@@ -9850,7 +9873,7 @@ static int menu_run(int *track, int *car)
                     break;
                 }
                 case SDLK_ESCAPE: page = 0; break;
-                case SDLK_F12: write_ppm("menu_page.ppm"); printf("saved menu_page.ppm\n"); break;
+                case SDLK_F12: picture_save("menu_page.ppm"); printf("saved menu_page.ppm\n"); break;
                 default: break;
                 }
             }
@@ -9957,7 +9980,7 @@ static int menu_run(int *track, int *car)
                     sys_fullscreen(!(SDL_GetWindowFlags(win) & SDL_WINDOW_FULLSCREEN_DESKTOP));
                     g_opt_disp = g_cfg.display;
                     break;
-                case SDLK_F12: write_ppm("menu_page.ppm"); printf("saved menu_page.ppm\n"); break;
+                case SDLK_F12: picture_save("menu_page.ppm"); printf("saved menu_page.ppm\n"); break;
                 default: break;
                 }
             }
@@ -10042,7 +10065,7 @@ static int menu_run(int *track, int *car)
                 static int shots = 0;
                 char name[64];
                 snprintf(name, sizeof name, "menu_%03d.ppm", shots++);
-                write_ppm(name);
+                picture_save(name);
                 printf("saved %s\n", name);
                 break;
             }
@@ -12254,7 +12277,7 @@ static int session(int argc, char **argv)
             if (g_intro) {                       /* 0x211d0: ESC, ENTER or SPACE ends it */
                 int k = ev.key.keysym.sym;
                 if (k == SDLK_ESCAPE || k == SDLK_RETURN || k == SDLK_KP_ENTER || k == SDLK_SPACE) g_in.st |= 2;
-                if (k == SDLK_F12) { write_ppm("intro.ppm"); printf("saved intro.ppm\n"); }
+                if (k == SDLK_F12) { picture_save("intro.ppm"); printf("saved intro.ppm\n"); }
                 if (k == SDLK_F5) fps_toggle();
                 continue;
             }
@@ -12376,8 +12399,7 @@ static int session(int argc, char **argv)
             case SDLK_F12: {
                 char name[64];
                 snprintf(name, sizeof name, "shot_%03d.ppm", shots++);
-                write_ppm(name);
-                shot_report(name, &cam);
+                if (picture_save(name)) shot_report(name, &cam);     /* (what is where: the depths and owners) */
                 printf("saved %s  (t=%d)\n", name, path_nearest(r, cam.x, cam.y));
                 fflush(stdout);
                 break;

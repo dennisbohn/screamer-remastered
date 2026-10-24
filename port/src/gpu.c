@@ -1415,6 +1415,8 @@ static void scene_targets_lo(int w, int h)
 }
 
 static int g_shape_w = 640, g_shape_h = 400;
+static int g_readback = 1;
+void gpu_readback(int on) { g_readback = on != 0; }
 void gpu_shape(int w, int h) { if (w > 0 && h > 0) { g_shape_w = w; g_shape_h = h; } }
 
 /* the window's part the picture fills: as large as it fits, in the middle (640 x 400 is 4:3: fb's
@@ -1742,12 +1744,15 @@ int gpu_scene(const gpu_view *v, const gpu_tri *t, int n, uint8_t *fb, float *zb
     }
 
     gpu_mark(2);
-    /* back to fb, zb and idb (a scene drawn larger: through targets of fb's size, each pixel
-       as it is at the middle of fb's; FILTERING: the number, depth and owner are the colour's
-       next three; MSAA: the first sample of each) */
     G->Disable(GL_SCISSOR_TEST);
     G->Disable(GL_DEPTH_TEST);
     G->DepthMask(GL_TRUE);
+    /* the scene is shown as the card has it, under the flat layer (gpu_overlay), whatever its size;
+       back to fb, zb and idb only when asked (gpu_readback): through targets of fb's size, each
+       pixel as it is at the middle of fb's; FILTERING: the number, depth and owner are the colour's
+       next three; MSAA: the first sample of each */
+    G->scene_card = 1;
+    if (g_readback) {
     GLenum from = GL_COLOR_ATTACHMENT0;
     if (vk & 2) {
         const GLenum all[3] = { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2 };
@@ -1775,7 +1780,6 @@ int gpu_scene(const gpu_view *v, const gpu_tri *t, int n, uint8_t *fb, float *zb
             G->BindFramebuffer(GL_FRAMEBUFFER, G->fbo_lo);
         } else from = first;
     }
-    G->scene_card = big || vk != 0;
     G->PixelStorei(GL_PACK_ALIGNMENT, 1);
     G->ReadBuffer(from);
     G->ReadPixels(0, 0, w, h, GL_RED_INTEGER, GL_UNSIGNED_BYTE, fb);
@@ -1783,6 +1787,7 @@ int gpu_scene(const gpu_view *v, const gpu_tri *t, int n, uint8_t *fb, float *zb
     G->ReadPixels(0, 0, w, h, GL_RED, GL_FLOAT, zb);
     G->ReadBuffer(from + 2);
     G->ReadPixels(0, 0, w, h, GL_RED_INTEGER, GL_SHORT, idb);
+    }
     gpu_mark(3);
     G->BindFramebuffer(GL_FRAMEBUFFER, 0);
     G->BindVertexArray(0);
