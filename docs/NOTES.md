@@ -1165,7 +1165,8 @@ measuring `0x25448`): one byte = number of fonts − 1 (7 fonts); per font 12 by
 int32 size; the pixels. A glyph is `height` rows of `(width+1)/2` bytes — **two pixels
 per byte, high half first**, each a shade 1..15 (0 = see-through) drawn as palette index
 `colour*16 + shade`, so a text colour is one of the palette's 16-colour ramps. Advance =
-width + 2. In a string, byte 1 = fixed pitch, 2 = proportional, 3/4 = the extra column
+width + 2 (also in STARTH, `0x25020`, in the high set's own pixels: not doubled -- the port had
+doubled it, and the speed's figures ran out of their box, 2026-10-24). In a string, byte 1 = fixed pitch, 2 = proportional, 3/4 = the extra column
 off/on. Fonts: 0 = full alphabet 30 high; 1 = big digits (its `:` is drawn as `/`);
 2 = LCD digits 10 high; 3 = tiny clock digits with `:`; 4 = medium digits; 5 = small
 alphabet; 6 = big white digits.

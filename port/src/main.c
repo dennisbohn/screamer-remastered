@@ -6669,16 +6669,19 @@ static int hud_text(int x, int y, const char *str, int font, int colour, int dra
     /* (figures in a column, after a byte 1: every one takes the widest letter's room and
        what is left between two -- in Screamer 2 the routine's own argument, which makes
        the clocks' figures 5 apart in the small font, as the original's picture has them) */
-    int cell = ft->widest + (g_hud_space != NO_SPACE ? g_hud_space * s_ : 2 * s_), fixed = 0, gap = s_, x0 = x;
+    /* (Screamer's gaps are in the font's own pixels, the high set's too: STARTH's 0x25020 adds
+       2, as STARTL's 0x24fc0 does -- doubled, the speed's figures ran out of their box) */
+    const int px = g_hud_space != NO_SPACE || os_game() == 2 ? s_ : 1;
+    int cell = ft->widest + (g_hud_space != NO_SPACE ? g_hud_space * s_ : 2 * px), fixed = 0, gap = px, x0 = x;
     for (const unsigned char *p = (const unsigned char *)str; *p; p++) {
         int ch = *p;
         if (ch < ft->first || ch >= ft->first + ft->count) {
             if (ch == 1) fixed = 1; else if (ch == 2) fixed = 0;
-            else if (ch == 3) gap = 0; else if (ch == 4) gap = s_;
+            else if (ch == 3) gap = 0; else if (ch == 4) gap = px;
             continue;
         }
         int w = ft->glyph[ch - ft->first][0];
-        int gx = x + (g_hud_space != NO_SPACE ? 0 : gap) + (fixed ? (cell - (w + s_)) / 2 : 0);
+        int gx = x + (g_hud_space != NO_SPACE ? 0 : gap) + (fixed ? (cell - (w + px)) / 2 : 0);
         if (draw) {
             const uint8_t *px = g_font_px + ft->glyph[ch - ft->first][1];
             int bw = (w + 1) / 2;
@@ -6698,7 +6701,7 @@ static int hud_text(int x, int y, const char *str, int font, int colour, int dra
                     hud_put(gx + c, y + r, colour * 16 + shade);
                 }
         }
-        x += fixed ? cell : g_hud_space != NO_SPACE ? w + g_hud_space * s_ : w + s_ + gap;
+        x += fixed ? cell : g_hud_space != NO_SPACE ? w + g_hud_space * s_ : w + px + gap;
     }
     return (x - x0 + s_ - 1) / s_;
 }
