@@ -30,7 +30,7 @@ The software renderer is the fall-back, nothing to choose in the menus:
 ## The picture's size (M3)
 
 OPTIONS starts with three pages of the port's own (since 2026-10-24): DISPLAY (RES, WINDOW /
-FULLSCREEN), GRAPHICS (DETAIL, then FILTERING and MSAA: next section) and AUDIO (the game's
+FULLSCREEN, ASPECT), GRAPHICS (FILTERING and MSAA: next section; not there without the card) and AUDIO (the game's
 SPEECH and MUSIC); then the game's DIFF., LAP NUMBER and VIEW RECORDS.
 
 - **RES**: the rows the card draws the scene with, in steps -- 480P, 720P, 1080P, 1440P, 2160P,
@@ -42,7 +42,8 @@ SPEECH and MUSIC); then the game's DIFF., LAP NUMBER and VIEW RECORDS.
   exactly as the software way, pixel for pixel; 320 x 200 (STARTL, the low set) is gone.
 - **WINDOW / FULLSCREEN**: the whole screen as the desktop has it, never another screen mode,
   so that no setting can leave the screen black; F11 the same. `display=window|fullscreen`.
-- **DETAIL**: the game's (and ULTRA), as before.
+- **DETAIL** is gone (2026-10-24): always ULTRA, the H set -- on the card a quarter of a ms more
+  than HI for the CPU, a tenth for the card. `OS_DETAIL=0..3` (a test) gives the game's three.
 
 Every change shows at once. How a larger scene is drawn:
 

@@ -252,7 +252,7 @@ static int      g_ground_colour = -1;   /* TRACK_DATA `color`: the palette index
 #define DRAWDIST_FAR      140000.0f
 static float g_drawdist = DRAWDIST_FAR;
 static float g_far_z;                 /* the far plane's depth; 0 = none */
-static int   g_detail = 2;            /* 0 LOW, 1 MID, 2 HI (the game's default), 3 ULTRA */
+static int   g_detail = 3;            /* 0 LOW, 1 MID, 2 HI (the game's three), 3 ULTRA: always 3 (OS_DETAIL, a test) */
 static float g_fog      = 0.0f;   /* OS_FOG=<units>: fade to haze, off by default */
 static int   g_cull     = 1;      /* back-face culling, as the engine does */
 static int   g_layer    = 3;      /* 0 / 1 = only that record run, 3 = both, 2 = none */
@@ -548,13 +548,12 @@ static void os_go(int argc, const char *a1, const char *a2)
 /* rows: the card draws the scene with this many rows (resolution=<rows>; 0 = native, as many as the
    window has); display: 1 the whole screen, as the desktop is (no other screen mode, ever);
    filtering, msaa: the card's (0, or 2, 4, 8 samples) */
-static struct { int diff, laps, speech, music, vol_cd, vol_fx, vol_mu, detail, game, renderer, gpu_starting, rows, display, filtering, msaa, music_fm, narrow; } g_cfg =
-    { 1, 0, 1, 1, 0x6000, 0x6000, 0x6000, 2, 1, RENDERER_DEFAULT, 0, 0, 0, 0, 0, 0, 0 };
+static struct { int diff, laps, speech, music, vol_cd, vol_fx, vol_mu, game, renderer, gpu_starting, rows, display, filtering, msaa, music_fm, narrow; } g_cfg =
+    { 1, 0, 1, 1, 0x6000, 0x6000, 0x6000, 1, RENDERER_DEFAULT, 0, 0, 0, 0, 0, 0, 0 };
 static int g_res_rows;                       /* this run: g_cfg.rows; -1 fb's own 640 x 400 (OS_RES=svga, a test) */
 /* key_accelerate= ... lines: a key's name in the place of the one in the game's CONTROLS.CFG (controls.c) */
 static char g_cfg_key[6][40];
 static const char *const g_cfg_key_word[6] = { "key_accelerate", "key_brake", "key_left", "key_right", "key_gear_up", "key_gear_down" };
-static const char *const g_detail_word[4] = { "low", "mid", "hi", "ultra" };
 static char **g_argv;
 static int    g_argc;
 
@@ -579,8 +578,6 @@ static void cfg_load(void)
         if (sscanf(line, "game=%d", &n) == 1) g_cfg.game = n == 2 ? 2 : 1;
         if (sscanf(line, "renderer=%63s", val) == 1) g_cfg.renderer = !strcmp(val, "gpu");
         if (sscanf(line, "gpu_starting=%d", &n) == 1) g_cfg.gpu_starting = n != 0;
-        if (sscanf(line, "detail=%63s", val) == 1)
-            for (int k = 0; k < 4; k++) if (!strcmp(val, g_detail_word[k])) g_cfg.detail = k;
         if (sscanf(line, "volume_cd=%d", &n) == 1) g_cfg.vol_cd = n < 0 ? 0 : n > 0x7fff ? 0x7fff : n;
         if (sscanf(line, "volume_fx=%d", &n) == 1) g_cfg.vol_fx = n < 0 ? 0 : n > 0x7fff ? 0x7fff : n;
         if (sscanf(line, "volume_mu=%d", &n) == 1) g_cfg.vol_mu = n < 0 ? 0 : n > 0x7fff ? 0x7fff : n;
@@ -605,7 +602,7 @@ static void cfg_save(void)
 {
     FILE *f = fopen("screamer-remastered.cfg", "w");
     if (!f) return;
-    fprintf(f, "detail=%s\nresolution=%s\ndifficulty=%d\nlaps=%d\nspeech=%d\nmusic=%d\n", g_detail_word[g_cfg.detail & 3],
+    fprintf(f, "resolution=%s\ndifficulty=%d\nlaps=%d\nspeech=%d\nmusic=%d\n",
             g_cfg.rows ? rows_word(g_cfg.rows) : "native", g_cfg.diff, g_cfg.laps, g_cfg.speech, g_cfg.music);
     fprintf(f, "display=%s\naspect=%s\n", g_cfg.display ? "fullscreen" : "window", g_cfg.narrow ? "4:3" : "wide");
     fprintf(f, "volume_cd=%d\nvolume_fx=%d\nvolume_mu=%d\n", g_cfg.vol_cd, g_cfg.vol_fx, g_cfg.vol_mu);
@@ -8797,7 +8794,7 @@ static void menu_frame(int screen, int pick, float turn, const uint8_t *bg, mesh
  * under OPTIONS the lap number and the speech.  The rest is listed, dimmed.
  */
 typedef struct { int line, works, *value, max; } menu_item;
-static int g_opt_detail = 2, g_opt_diff = 1, g_opt_laps = 0, g_opt_speech = 1, g_opt_music = 1;
+static int g_opt_diff = 1, g_opt_laps = 0, g_opt_speech = 1, g_opt_music = 1;
 static int g_opt_res, g_opt_disp, g_opt_aspect; /* DISPLAY: RES, the n-th of g_res_list; 1 FULLSCREEN; 1 ASPECT 4:3 */
 static int g_opt_filter, g_opt_msaa;            /* GRAPHICS: FILTERING 0 OFF 1 ON; MSAA 0 OFF, 1 2X, 2 4X, 3 8X */
 /* THE PORT'S OWN: with both games found and no -game, the menu starts on a page of two lines that
@@ -8815,23 +8812,24 @@ static const menu_item g_page_attack[] = {       /* the game's page 3: NEW / RES
     { 24, 1, NULL, 0 }, { 25, 1, NULL, 0 },
 };
 static menu_item g_page_options[] = {            /* the difficulty's highest value is 0x2081c */
-    /* the port's: three pages of its own first, DISPLAY, GRAPHICS (with the game's first line, its
-       DETAIL -- how far it draws: g_far_z -- and a fourth value, ULTRA) and AUDIO (the game's
-       SPEECH and MUSIC); texts 60..95 are the port's: see menu_texts */
+    /* the port's: three pages of its own first, DISPLAY, GRAPHICS and AUDIO (the game's SPEECH and
+       MUSIC) -- in the place of the game's first line, its DETAIL (how far it draws, g_far_z: here
+       always the furthest); texts 60..95 are the port's: see menu_texts */
     { 80, 1, NULL, 0 }, { 68, 1, NULL, 0 }, { 81, 1, NULL, 0 },
 #define OPT_DIFF 3
 #define OPT_LINES 6
     { 8, 1, &g_opt_diff, 2 }, { 13, 1, &g_opt_laps, 3 }, { 21, 1, NULL, 0 },
 };
 /* THE PORT'S OWN: DISPLAY -- RES, the scene's rows on the card (steps up to the screen's own:
-   res_list_make), the window or the whole screen, and a race as wide as the window or 4:3; GRAPHICS -- the game's DETAIL and the card's
-   FILTERING and MSAA; AUDIO -- the game's SPEECH and MUSIC.  The card's lines are not there without it */
+   res_list_make), the window or the whole screen, and a race as wide as the window or 4:3; GRAPHICS
+   -- the card's FILTERING and MSAA; AUDIO -- the game's SPEECH and MUSIC.  The card's lines are not
+   there without it, nor GRAPHICS.  (The game's DETAIL is gone: always ULTRA, the H set) */
 static menu_item g_page_display[] = { { 82, 1, &g_opt_res, 0 }, { 72, 1, &g_opt_disp, 1 }, { 90, 1, &g_opt_aspect, 1 } };
 static menu_item g_page_graphics[] = {
-    { 62, 1, &g_opt_detail, 3 },
-#ifdef OS_GPU
     { 74, 1, &g_opt_filter, 1 }, { 76, 1, &g_opt_msaa, 3 },
-#endif
+};
+static const menu_item g_page_options_nocard[] = {     /* (OPTIONS without the card: no GRAPHICS) */
+    { 80, 1, NULL, 0 }, { 81, 1, NULL, 0 }, { 8, 1, &g_opt_diff, 2 }, { 13, 1, &g_opt_laps, 3 }, { 21, 1, NULL, 0 },
 };
 static const menu_item g_page_audio[] = { { 17, 1, &g_opt_speech, 1 }, { 19, 1, &g_opt_music, 1 } };
 #define PAGE_GRAPHICS  10
@@ -9472,10 +9470,6 @@ static int menu_run(int *track, int *car)
     n = text_lines("build/dec/LOCAL/TRACKDAT.TXT", lines, 96);
     for (int i = 0; i < 12 && i * 4 < n; i++) snprintf(g_menu_track[i], sizeof g_menu_track[i], "%.23s", lines[i * 4]);
     text_lines("build/dec/LOCAL/MENU.TXT", g_menu_text, 60);
-    strcpy(g_menu_text[60], "LOW RESOLUTION");
-    strcpy(g_menu_text[61], "HIGH RESOLUTION");
-    for (int k = 0; k < 3; k++) strcpy(g_menu_text[62 + k], g_menu_text[5 + k]);     /* LOW / MID / HI DETAIL */
-    strcpy(g_menu_text[65], "ULTRA DETAIL");
     strcpy(g_menu_text[66], "SCREAMER");         /* (the port's: the page that chooses the game, both being there) */
     strcpy(g_menu_text[67], "SCREAMER 2");
     strcpy(g_menu_text[68], "GRAPHICS");         /* (the port's: its page of the picture's settings, PAGE_GRAPHICS) */
@@ -9555,7 +9549,6 @@ static int menu_run(int *track, int *car)
     /* the options: as the settings file has them, or as the race just left hands them back */
     g_opt_disp = g_cfg.display;
     g_opt_aspect = g_cfg.narrow;
-    g_opt_detail = g_cfg.detail;
     g_opt_diff = g_cfg.diff; g_opt_laps = g_cfg.laps;
     if (getenv("OS_MENU_GOTO")) { page = atoi(getenv("OS_MENU_GOTO")); unsetenv("OS_MENU_GOTO"); }
     if (getenv("OS_DIFF")) { g_opt_diff = atoi(getenv("OS_DIFF")); if (g_opt_diff > 3) g_opt_diff = 3; }
@@ -9648,8 +9641,8 @@ static int menu_run(int *track, int *car)
 #ifdef OS_GPU
         {   /* GRAPHICS: FILTERING and MSAA where the card has them (their lines are not there otherwise) */
             const int most = gpu_msaa_max();
-            g_page_graphics[2].max = most >= 8 ? 3 : most >= 4 ? 2 : most >= 2 ? 1 : 0;
-            if (most > 0 && g_opt_msaa > g_page_graphics[2].max) g_opt_msaa = g_page_graphics[2].max;
+            g_page_graphics[1].max = most >= 8 ? 3 : most >= 4 ? 2 : most >= 2 ? 1 : 0;
+            if (most > 0 && g_opt_msaa > g_page_graphics[1].max) g_opt_msaa = g_page_graphics[1].max;
         }
 #endif
         if (g_opt_diff > g_page_options[OPT_DIFF].max) g_opt_diff = g_page_options[OPT_DIFF].max;
@@ -9886,10 +9879,10 @@ static int menu_run(int *track, int *car)
         }
         if (page >= 0) {
             const int card = card_lines();
-            const menu_item *items = page == 0 ? g_page_main : page == 1 ? g_page_options : page == PAGE_GRAPHICS ? g_page_graphics
+            const menu_item *items = page == 0 ? g_page_main : page == 1 ? (card ? g_page_options : g_page_options_nocard) : page == PAGE_GRAPHICS ? g_page_graphics
                                    : page == PAGE_DISPLAY ? g_page_display + !card : page == PAGE_AUDIO ? g_page_audio
                                    : page == 2 ? g_page_special : page == 7 ? g_page_records : page == PAGE_GAME ? g_page_game : g_page_attack;
-            int n = page == 0 ? 5 : page == 1 ? OPT_LINES : page == PAGE_GRAPHICS ? 1 + 2 * card : page == PAGE_DISPLAY ? 2 + card
+            int n = page == 0 ? 5 : page == 1 ? OPT_LINES - !card : page == PAGE_GRAPHICS ? 2 : page == PAGE_DISPLAY ? 2 + card
                   : page == PAGE_AUDIO ? 2 : page == 2 ? 3 : page == 7 ? 6 : 2;      /* 3 and 5: NEW / RESUME; the game's two */
             memcpy(g_pal, pal_main, sizeof g_pal);
             {
@@ -10084,7 +10077,7 @@ static int menu_run(int *track, int *car)
     {
         static const char *laps[4] = { "3", "5", "10", "25" };
         if (!shotfile[0] && !getenv("OS_MENU_KEYS")) {
-            g_cfg.detail = g_opt_detail;
+
             g_cfg.diff = g_opt_diff; g_cfg.laps = g_opt_laps; g_cfg.speech = g_opt_speech; g_cfg.music = g_opt_music;
             cfg_save();
         }
@@ -11527,9 +11520,9 @@ static int session(int argc, char **argv)
     float t0          = (argc > 5) ? (float)atof(argv[5]) : 0.0f;
     float cam_height  = (argc > 6) ? (float)atof(argv[6]) : 600.0f;
     if (argc > 7) g_layer = atoi(argv[7]);
-    /* the DETAIL option; OS_DETAIL=0..3 for one run, OS_DRAWDIST=<units> the
-       old test switch (no far plane, pieces out to that distance) */
-    g_detail = getenv("OS_DETAIL") ? atoi(getenv("OS_DETAIL")) & 3 : g_cfg.detail & 3;
+    /* the draw distance: ULTRA; OS_DETAIL=0..3 for one run (the game's LOW, MID and HI, to compare),
+       OS_DRAWDIST=<units> the old test switch (no far plane, pieces out to that distance) */
+    g_detail = getenv("OS_DETAIL") ? atoi(getenv("OS_DETAIL")) & 3 : 3;
     if (g_detail == 3) { g_far_z = 0.0f; g_drawdist = DRAWDIST_FAR; }
     else { g_far_z = g_detail == 2 ? 43808.0f : 27808.0f; g_drawdist = DRAWDIST_ORIGINAL; }
     if (getenv("OS_DRAWDIST")) { g_far_z = 0.0f; g_drawdist = (float)atof(getenv("OS_DRAWDIST")); }

@@ -22,6 +22,7 @@ What changed from OpenScreamer (2026-10-23..24; the details in `docs/GPU.md` and
   `OS_READBACK`); the flat layer comes from the drawing routines' marks alone (`LAY_PUT` /
   `LAY_RUN` -- a new routine that writes into fb must mark its pixels, or the card's scene covers
   them); MSAA shaded once a pixel, keyed edges by alpha to coverage.
+- No DETAIL option: always ULTRA with the H set (`OS_DETAIL` for tests).
 - The picture between two 50 Hz steps (`lerp_apply`), OPTIONS as DISPLAY / GRAPHICS / AUDIO, the CD
   music from GOG's disc image, the program's own name and home (`screamer-remastered`, the old
   OpenScreamer home taken over once).
