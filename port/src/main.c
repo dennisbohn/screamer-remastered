@@ -399,7 +399,7 @@ static SDL_Window *sys_window(SDL_Renderer **ren)
 static int readback_wanted(void)
 {
     static const char *const tests[] = { "OS_SHOTEVERY", "OS_SHOTAT", "OS_MENU_SHOT", "OS_INTRO_TEST", "OS_INSPECT",
-                                         "OS_GPUCHECK", "OS_DEMO", "OS_LOAD_SHOT" };
+                                         "OS_GPUCHECK", "OS_DEMO", "OS_LOAD_SHOT", "OS_S2MSHOT" };
     if (getenv("OS_READBACK")) return atoi(getenv("OS_READBACK")) != 0;     /* (a test: 0 as when playing, 1 always) */
     for (size_t i = 0; i < sizeof tests / sizeof tests[0]; i++) if (getenv(tests[i])) return 1;
     return os_dev();
@@ -1918,11 +1918,12 @@ static const uint8_t *mix_table(void)
 }
 
 /* M3: THE MENU'S 3D ON THE CARD as well, when the scene is drawn larger than fb (RES NATIVE) or in
-   colour (FILTERING, MSAA): menu3d_begin after its backdrop is in fb, menu3d_end once its 3D is listed */
+   colour (FILTERING, MSAA): menu3d_begin after its backdrop is in fb, menu3d_end once its 3D is listed
+   (both games' menus: Screamer 2's draws its 3D once a picture at most, s2m_draw) */
 static void menu3d_begin(void)
 {
     g_gpu_scene = 0;
-    if (!gpu_active() || os_game() != 1 || !g_mlb || (getenv("OS_GPU3D") && !atoi(getenv("OS_GPU3D")))) return;
+    if (!gpu_active() || !g_mlb || (getenv("OS_GPU3D") && !atoi(getenv("OS_GPU3D")))) return;
     scene_size(&g_gpu_rw, &g_gpu_rh);
     if (g_gpu_rw == FB_W && g_gpu_rh == FB_H && !gpu_colour()) return;
     gpu_send_materials();
@@ -8958,6 +8959,55 @@ static void res_list_make(SDL_Window *win)
     g_opt_res = g_res_n - 1;                     /* (the screen's own, or the step the settings have) */
     for (int i = 0; i < g_res_n - 1; i++) if (g_cfg.rows && g_res_list[i] >= g_cfg.rows) { g_opt_res = i; break; }
 }
+/* THE PORT'S SETTINGS ON SCREAMER 2'S OPTIONS PAGE (s2r_car.h's GRAPHICS): DISPLAY's and GRAPHICS'
+   lines, each a name and its value; ENTER steps one round, at once and saved, as OPTIONS does.
+   Without the card: the window and the race's shape alone */
+enum { SET_RES, SET_DISPLAY, SET_ASPECT, SET_FILTER, SET_MSAA };
+static int set_line(int i) { return card_lines() ? i : i + SET_DISPLAY; }
+int os_set_lines(void)
+{
+    if (!g_res_n) res_list_make(os_slot(0));
+    return card_lines() ? 5 : 2;
+}
+const char *os_set_name(int i)
+{
+    static const char *const name[5] = { "RESOLUTION", "DISPLAY", "ASPECT", "FILTERING", "MSAA" };
+    return name[set_line(i)];
+}
+const char *os_set_value(int i)
+{
+    static char v[16];
+    switch (set_line(i)) {
+    case SET_RES:     snprintf(v, sizeof v, ":%dP", g_res_list[g_opt_res]); return v;
+    case SET_DISPLAY: return g_cfg.display ? ":FULLSCREEN" : ":WINDOW";
+    case SET_ASPECT:  return g_cfg.narrow ? ":4:3" : ":WIDE";
+    case SET_FILTER:  return g_cfg.filtering ? ":ON" : ":OFF";
+    default:          if (!g_cfg.msaa) return ":OFF";
+                      snprintf(v, sizeof v, ":%dX", g_cfg.msaa); return v;
+    }
+}
+void os_set_step(int i)
+{
+    switch (set_line(i)) {
+    case SET_RES:
+        g_opt_res = (g_opt_res + 1) % g_res_n;
+        if (g_res_rows >= 0) { g_res_rows = g_cfg.rows = g_opt_res >= g_res_n - 1 ? 0 : g_res_list[g_opt_res]; cfg_save(); }
+        break;
+    case SET_DISPLAY: sys_fullscreen(!g_cfg.display); break;
+    case SET_ASPECT:  g_cfg.narrow = !g_cfg.narrow; cfg_save(); break;
+#ifdef OS_GPU
+    case SET_FILTER:
+    case SET_MSAA:
+        if (set_line(i) == SET_FILTER) g_cfg.filtering = !g_cfg.filtering;
+        else { const int m = g_cfg.msaa ? g_cfg.msaa * 2 : 2; g_cfg.msaa = m > gpu_msaa_max() ? 0 : m; }
+        gpu_quality_mark();
+        cfg_save();
+        gpu_quality_set();
+        break;
+#endif
+    }
+}
+
 static const menu_item g_page_records[] = {      /* the game's page 6: a track's records */
     { 31, 1, NULL, 0 }, { 32, 1, NULL, 0 }, { 33, 1, NULL, 0 }, { 34, 1, NULL, 0 }, { 35, 1, NULL, 0 }, { 36, 1, NULL, 0 },
 };
@@ -10689,6 +10739,7 @@ void s2m_picture(int x, int y, int w, int h, const uint8_t *px)    /* 0x51b02 */
             const int xx = x + c;
             if (xx < 0 || xx >= sw) continue;
             fb[yy * FB_W + xx] = px[r * w + c];
+            LAY_PUT(yy * FB_W + xx);
         }
     }
 }
@@ -10739,11 +10790,10 @@ void s2m_dark(int x, int y, int w, int h)      /* 0x51698, on the colours' numbe
     for (int yy = y; yy < y + h && yy < sh; yy++)
         for (int xx = x; xx < x + w && xx < sw; xx++) {
             if (yy < 0 || xx < 0) continue;
-            const int i = yy * FB_W + xx;
-            fb[i] = g_s2_dark[0][fb[i]];
+            lay_dark(yy * FB_W + xx, g_s2_dark[0]);
         }
 }
-void s2m_clear(uint8_t idx) { memset(fb, idx, FB_BYTES); }
+void s2m_clear(uint8_t idx) { memset(fb, idx, FB_BYTES); LAY_RUN(fb, FB_BYTES); }
 
 /* the engine's objects in its draw list (0x753a0), as s2_menu_hooks.h finds them, drawn by the
    port's renderer over what is on the screen.  Meshes by container and name, loaded once;
@@ -10883,6 +10933,7 @@ void s2m_draw(const s2m_item *it, int n, const s2m_cam *cm, int room)
     if (room && g_s2m_have_sky) {
         sky_paint(cam.yaw, cam.pitch, cam.roll, &g_s2m_sky, g_focal_x, g_focal_y);
     }
+    menu3d_begin();                                   /* (maybe the card's: the flat things after it marked) */
     view_setup(&cam);
     g_tri_listing = 1;
     if (room && g_s2m_have_scene) {
@@ -10898,7 +10949,11 @@ void s2m_draw(const s2m_item *it, int n, const s2m_cam *cm, int room)
     for (int pass = 0; pass < 2; pass++)
         for (int i = 0; i < m; i++) draw_object(&obj[i], (room && g_s2m_have_scene ? g_s2m_scene.count : 0) + i, pass, &cam);
     g_scene = keep_scene;
+#ifdef OS_GPU
+    if (g_gpu_scene) menu3d_end(); else
+#endif
     raster_flush();
+    g_tri_listing = 0;
     g_cy = keep_cy; g_vh = keep_vh;
 }
 
@@ -10913,6 +10968,20 @@ int s2m_show(void)
     /* shown through the hardware palette as last set (g_s2m_hw), which the fades change */
     g_show_src = g_s2m_hw;
     memcpy(all, fb, FB_BYTES);
+    lay_end();                                          /* (the card's 3D under the flat things) */
+    /* a test: OS_S2MSHOT=<frame>,<file>: that frame written, and the end (OS_GPUSHOTHI=1: as the
+       card shows it too, <file>_hi.ppm) */
+    int shot = 0;
+    char shot_name[256] = "menu.ppm";
+    if (getenv("OS_S2MSHOT")) {
+        static int f;
+        int at = 0;
+        sscanf(getenv("OS_S2MSHOT"), "%d,%255s", &at, shot_name);
+        shot = ++f >= at;
+#ifdef OS_GPU
+        if (shot && getenv("OS_GPUSHOTHI")) { char hi[300]; snprintf(hi, sizeof hi, "%s_hi.ppm", shot_name); gpu_shot_next(hi); }
+#endif
+    }
     if (g_s2m_tex) {
         show_pixels(g_s2m_tex, all, FB_H);
         g_show_src = g_s2m_hw;
@@ -10920,12 +10989,7 @@ int s2m_show(void)
         SDL_RenderCopy(g_s2m_ren, g_s2m_tex, NULL, NULL);
         SDL_RenderPresent(g_s2m_ren);
     }
-    if (getenv("OS_S2MSHOT")) {                       /* a test: OS_S2MSHOT=<frame>,<file>: that frame written, and the end */
-        static int f;
-        int at = 0; char name[256] = "menu.ppm";
-        sscanf(getenv("OS_S2MSHOT"), "%d,%255s", &at, name);
-        if (++f >= at) { write_ppm_of(name, all, FB_H); g_s2m_closed = 1; }
-    }
+    if (shot) { write_ppm_of(shot_name, all, FB_H); g_s2m_closed = 1; }
     static const struct { SDL_Scancode sdl; uint8_t pc; } map[] = {
         { SDL_SCANCODE_ESCAPE, 0x01 }, { SDL_SCANCODE_RETURN, 0x1c }, { SDL_SCANCODE_KP_ENTER, 0x1c }, { SDL_SCANCODE_SPACE, 0x39 },
         { SDL_SCANCODE_BACKSPACE, 0x0e }, { SDL_SCANCODE_TAB, 0x0f }, { SDL_SCANCODE_UP, 0x48 }, { SDL_SCANCODE_DOWN, 0x50 },

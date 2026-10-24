@@ -26,7 +26,7 @@ The software renderer is the fall-back, nothing to choose in the menus:
 | M4 | 16:9 and wider: the races of both games as wide as the window, the flat things at its edges, the cockpit's and Screamer 2's dashboard's sides drawn out, ASPECT WIDE / 4:3 (main.c `pic_follow`, `g_ox`, `pic_draw_wide`) | done |
 | M5 | draw distance (far plane, keep range, animations started as far as is drawn) | put back: ULTRA is enough for now |
 | M6 | interpolation between the 50 Hz physics steps | done (main.c `lerp_apply`) |
-| S2 | Screamer 2's race scene on the card: every material library in one block, the distance table (night, fog) a row a face, the reflections' map wrapping at 128; the mirror by the software | done |
+| S2 | Screamer 2's race scene on the card: every material library in one block, the distance table (night, fog) a row a face, the reflections' map wrapping at 128; the mirror by the software. Its menu's 3D too; GRAPHICS on its GAME SETTINGS page | done |
 
 ## The picture's size (M3)
 

@@ -13,6 +13,9 @@ What changed from OpenScreamer (2026-10-23..24; the details in `docs/GPU.md` and
   the MiSTer code with its tall and wide pictures. Screamer 2 is at 640 x 400; its race's scene
   is on the card too (all its material libraries in one block, `lib_at`; the distance table a row
   a face, `gpu_tri.fade`; the mirror by raster_job, `g_soft_scene`, laid over by `s2_mirror_lay`).
+  Its menu's 3D too (`s2m_draw` through `menu3d_begin` / `menu3d_end`); its GAME SETTINGS page has
+  the port's GRAPHICS line, a page of RESOLUTION, DISPLAY, ASPECT, FILTERING, MSAA (`s2m_graphics`,
+  main.c `os_set_*`; `OS_S2MGOTO=options` starts the menu there, a test).
 - A race is as wide as the window (16:9 = 854 x 400; `pic_follow`, the flat things at `g_ox`:
   LAY_LEFT / MID / RIGHT; `OS_ASPECT=16:9` a test; DISPLAY's ASPECT 4:3, `aspect=4:3`, keeps a race
   4:3); menus stay 4:3. The cockpit's sides are drawn out, the middle as it is (`pic_draw_wide`).

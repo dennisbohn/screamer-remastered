@@ -150,7 +150,12 @@ int  s2_player(void);                                    /* which car is the pla
 /* SCREAMER 2'S OWN MENU: the game's routines (s2_hooks.c) and the port's screen (main.c) */
 typedef struct { char cont[16], name[16], lib[32]; int x, y, z, a[3], frame; } s2m_item;   /* an object of the engine's list (lib: its materials) */
 typedef struct { int x, y, z, a[3]; } s2m_cam;                                      /* its camera record */
-int  s2_menu_res_change(void);                           /* the options page asked for the other resolution: 1 low, 2 high */
+/* the port's settings for the options page's GRAPHICS line (main.c): the lines there are, each
+   one's name and value (":..."), ENTER on one (the next value, at once and saved) */
+int  os_set_lines(void);
+const char *os_set_name(int i);
+const char *os_set_value(int i);
+void os_set_step(int i);
 int  s2_menu_run(void);                                  /* the menu's loop (0x38540): 0 when the program is to end */
 void s2m_base(const uint8_t *six);
 void s2m_palette(const uint8_t *six);

@@ -621,8 +621,6 @@ void s2_gen_strings(void) { }
 void s2_gen_tables(void) { s2r_tables(); }
 #endif
 static void s2_hooks_set(void) { s2r_strings(); }
-/* the options page's RESOLUTION line (s2r_car.h 0x420c0): 1 low, 2 high was asked for (once) */
-int s2_menu_res_change(void) { const int r = s2m_res_change; s2m_res_change = 0; return r; }
 static void s2m_list_clear(void) { FUN_0004b016(); }
 
 /*
