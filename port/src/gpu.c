@@ -144,6 +144,7 @@ typedef struct {
     GLint  size, factor, gscale, smg_rows, tie, half, cy, focal;     /* the scene's passes */
     GLint  mode, sky0, sky1, sky2;                                    /* the backdrop's */
     GLint  ssize, area, flip, rgb, samples, to, fade;                 /* the picture's (draw_mixed) */
+    GLint  haze;                                                      /* the scene's passes: the haze's depths */
 } gpu_prog;
 
 /* M3: a texture frame made a colour layer: where its bytes are, its extent, its kind */
@@ -203,6 +204,9 @@ typedef struct {
     int   *mat_first, *mat_frames, *frame_layer;
     int    nmat, nframe;
     GLuint mlb_buf, mlb_tex, d2_buf, d2_tex, fl_buf, fl_tex, smg_tex, fade_tex;
+    float  haze[2];                 /* the scene's haze, gpu_view's */
+    GLuint t_haze, fbo_haze;        /* FILTERING: the backdrop as drawn, before the faces (haze_w x haze_h) */
+    int    haze_w, haze_h;
     gpu_rec *rec;                   /* by triangle, and its corners (C library memory) */
     gpu_corner *corner;
     long   rec_cap;
@@ -280,6 +284,7 @@ static const char *const g_scene_vertex_src =
     "layout(std430, binding = 0) readonly buffer tri_list { tri_rec tri[]; };\n" \
     "layout(binding = 0) uniform usamplerBuffer mlb;\n" \
     "uniform vec2 u_factor;\n" \
+    "uniform vec2 u_haze;\n" \
     "flat in int f_tri;\n" \
     "#define AT (gl_FragCoord.xy / u_factor)\n" \
     "tri_rec t;\n" \
@@ -310,7 +315,13 @@ static const char *const g_scene_vertex_src =
     "    int o = tv * 256 + tu;\n" \
     "    return o >= t.avail ? 256u : texelFetch(mlb, t.offset + o).r;\n" \
     "}\n" \
-    "#endif\n"
+    "#endif\n" \
+    "float haze() { return u_haze.y > 0.0 ? clamp((1.0 / iz - u_haze.x) / (u_haze.y - u_haze.x), 0.0, 1.0) : 0.0; }\n" \
+    "bool haze_gone(float h) {\n" \
+    "    const float b[16] = float[16](0.0, 8.0, 2.0, 10.0, 12.0, 4.0, 14.0, 6.0, 3.0, 11.0, 1.0, 9.0, 15.0, 7.0, 13.0, 5.0);\n" \
+    "    ivec2 q = ivec2(gl_FragCoord.xy) & 3;\n" \
+    "    return h > (b[q.y * 4 + q.x] + 0.5) / 16.0;\n" \
+    "}\n"
 
 /* pass 0, everything solid: palette number, the software's depth, the owner.  M3, FILTERING (RGB):
    the colour too, first -- the frame's colour layer filtered at the texel's place, its steps per
@@ -322,6 +333,7 @@ static const char *const g_scene0_src =
     "#ifdef RGB\n"
     GPU_LIGHT_SRC
     "layout(binding = 13) uniform sampler2D fade_fit;\n"      /* its rows as lines on the colours */
+    "layout(binding = 14) uniform sampler2D t_haze;\n"        /* the backdrop as drawn, for the haze */
     "layout(binding = 1) uniform sampler2D pal;\n"
     "layout(binding = 10) uniform sampler2DArray frames;\n"
     "layout(binding = 11) uniform sampler2DArray frames_wrap;\n"
@@ -393,10 +405,13 @@ static const char *const g_scene0_src =
     "        if (t.colour < 0 && t.layer >= 0) c.rgb = texelFetch(fade_fit, ivec2(0, t.fade), 0).rgb * c.rgb + texelFetch(fade_fit, ivec2(1, t.fade), 0).rgb;\n"
     "        else c = vec4(texelFetch(pal, ivec2(int(n), 0), 0).rgb, 1.0);\n"
     "    }\n"
+    "    float hz = haze();\n"                               /* far off: over into the backdrop */
+    "    if (hz > 0.0) c.rgb = enc(mix(lin(c.rgb), lin(texelFetch(t_haze, ivec2(gl_FragCoord.xy), 0).rgb), hz));\n"
     "    o_colour = c; o_index = n; o_zsw = iz * t.zbias; o_id = t.id;\n"
     "#else\n"
     "    if (n == 256u || ((t.kind & 1) != 0 && n == 0u && !a2c)) discard;\n"
     "    if (t.fade >= 0) n = texelFetch(fade_tab, ivec2(int(n), t.fade), 0).r;\n"
+    "    if (haze_gone(haze())) discard;\n"                     /* (raster_job's pattern) */
     "    o_index = n; o_zsw = iz * t.zbias; o_id = t.id;\n"
     "#endif\n"
     "    gl_FragDepth = iz * t.hw * 8.0;\n"
@@ -464,7 +479,7 @@ static const char *const g_scene1_src =
     "        } else if (mine < there) discard;\n"
     "    }\n"
     "    bool hole = n == 0u && u_half == 0;\n"
-    "    if (n == 256u || (hole && FILTERING == 0)) discard;\n"
+    "    if (n == 256u || (hole && FILTERING == 0) || haze_gone(haze())) discard;\n"
     "    uint under = texelFetch(t_index, p, ONE).r;\n"
     "    uint m = hole ? under : texelFetch(smg, ivec2(int(under), min(int(n), u_smg_rows - 1)), 0).r;\n"
     "    o_index = m;\n"
@@ -1064,10 +1079,10 @@ static int prog_make(gpu_prog *p, GLuint prog)
     if (!prog) return 0;
     static const char *const name[] = { "u_size", "u_factor", "u_gscale", "u_smg_rows", "u_tie", "u_half", "u_cy", "u_focal",
                                         "u_mode", "u_sky0", "u_sky1", "u_sky2",
-                                        "ssize", "area", "flip", "u_rgb", "u_samples", "u_to", "u_fade" };
+                                        "ssize", "area", "flip", "u_rgb", "u_samples", "u_to", "u_fade", "u_haze" };
     GLint *at[] = { &p->size, &p->factor, &p->gscale, &p->smg_rows, &p->tie, &p->half, &p->cy, &p->focal,
                     &p->mode, &p->sky0, &p->sky1, &p->sky2,
-                    &p->ssize, &p->area, &p->flip, &p->rgb, &p->samples, &p->to, &p->fade };
+                    &p->ssize, &p->area, &p->flip, &p->rgb, &p->samples, &p->to, &p->fade, &p->haze };
     for (size_t k = 0; k < sizeof at / sizeof at[0]; k++) *at[k] = G->GetUniformLocation(prog, name[k]);
     if (p->size < 0) p->size = G->GetUniformLocation(prog, "size");      /* (the picture's is "size") */
     return 1;
@@ -1442,6 +1457,29 @@ void gpu_area(int *w, int *h)
     *w = dw; *h = dh;
 }
 
+/* FILTERING with the haze: the backdrop as drawn (the colour target before the faces; MSAA's
+   samples made one) for pass 0 to go over into */
+static void haze_keep(int vk, int w, int h)
+{
+    if (w != G->haze_w || h != G->haze_h) {
+        if (G->fbo_haze) { G->DeleteTextures(1, &G->t_haze); G->DeleteFramebuffers(1, &G->fbo_haze); }
+        G->t_haze = texture();
+        G->TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV, NULL);
+        G->GenFramebuffers(1, &G->fbo_haze);
+        G->BindFramebuffer(GL_FRAMEBUFFER, G->fbo_haze);
+        G->FramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, G->t_haze, 0);
+        const GLenum one = GL_COLOR_ATTACHMENT0;
+        G->DrawBuffers(1, &one);
+        G->haze_w = w; G->haze_h = h;
+    }
+    G->Disable(GL_SCISSOR_TEST);
+    G->BindFramebuffer(GL_READ_FRAMEBUFFER, vk & 2 ? G->fbo0m : G->fbo0c);
+    G->ReadBuffer(GL_COLOR_ATTACHMENT0);
+    G->BindFramebuffer(GL_DRAW_FRAMEBUFFER, G->fbo_haze);
+    G->BlitFramebuffer(0, 0, w, h, 0, 0, w, h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+    G->BindFramebuffer(GL_FRAMEBUFFER, 0);
+}
+
 /* depth_keep's rules for the solid faces, as factors on the card's depth: a carpet counts as
    twice as far; on a tie the object nearer the camera wins (a hair's nudge by distance) */
 static const float *g_rank_d2;
@@ -1504,12 +1542,14 @@ static void draw_solid(int vk, int a, int b, int w, int h, int rw, int rows, flo
     G->UseProgram(p->prog);
     G->Uniform2f(p->size, (float)w, (float)h);
     G->Uniform2f(p->factor, fx, fy);
+    G->Uniform2f(p->haze, G->haze[0], G->haze[1]);
     if (vk & 1) {                                   /* M3, FILTERING: the frames' colour layers (a sample's share of a pixel's steps) */
         G->Uniform1f(p->gscale, 1.0f / sqrtf((float)G->samples));
         G->ActiveTexture(GL_TEXTURE1); G->BindTexture(GL_TEXTURE_2D, G->pal_tex);
         G->ActiveTexture(GL_TEXTURE10); G->BindTexture(GL_TEXTURE_2D_ARRAY, G->layers);
         G->ActiveTexture(GL_TEXTURE11); G->BindTexture(GL_TEXTURE_2D_ARRAY, G->layers);
         G->ActiveTexture(GL_TEXTURE13); G->BindTexture(GL_TEXTURE_2D, G->fade_fit);
+        G->ActiveTexture(GL_TEXTURE14); G->BindTexture(GL_TEXTURE_2D, G->t_haze);
         G->ActiveTexture(GL_TEXTURE0);
     }
     for (int i = a, car = -1; i < b; ) {
@@ -1542,6 +1582,7 @@ static void draw_glass(int vk, const gpu_view *v, int a, int b, float fx, float 
     G->UseProgram(p->prog);
     G->Uniform2f(p->size, (float)v->w, (float)v->h);
     G->Uniform2f(p->factor, fx, fy);
+    G->Uniform2f(p->haze, G->haze[0], G->haze[1]);
     G->Uniform1i(p->smg_rows, v->smg_rows);
     G->Uniform1i(p->tie, v->tie_rule);
     G->Uniform1i(p->half, v->smg_half);
@@ -1593,6 +1634,7 @@ int gpu_scene(const gpu_view *v, const gpu_tri *t, int n, uint8_t *fb, float *zb
     const float fx = (float)rw / (float)w, fy = (float)rh / (float)h;
     /* M3: FILTERING (the colour too, from the frames' colour layers of this palette) and MSAA */
     const int colour = G->colour_ok && v->pal;
+    G->haze[0] = v->haze_near; G->haze[1] = v->haze_far > v->haze_near ? v->haze_far : 0.0f;
     G->filter = colour && G->want_filter;
     G->samples = colour ? samples_wanted() : 1;
     if (G->filter && (!G->pal_set || memcmp(G->pal_now, v->pal, sizeof G->pal_now))) {
@@ -1752,6 +1794,7 @@ int gpu_scene(const gpu_view *v, const gpu_tri *t, int n, uint8_t *fb, float *zb
             if (!big) for (GLuint k = 1; k < 4; k++) G->ColorMaski(k, GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
         }
         G->TextureBarrier();                        /* (pass 1 reads what the backdrop wrote: the menu's lists may begin with it) */
+        if ((vk & 1) && G->haze[1] > 0.0f) haze_keep(vk, rw, rh);
     }
 
     gpu_mark(1);
