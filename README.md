@@ -1,91 +1,113 @@
-# OpenScreamer
+# Screamer Remastered
 
-A reimplementation of *Screamer* (Graffiti / Virgin Interactive, 1995, MS-DOS) and *Screamer 2*
-(Milestone / Virgin Interactive, 1996, MS-DOS) for Linux and Windows, written by reading the
-original programs.
+A remaster of *Screamer* (Graffiti / Virgin Interactive, 1995) and *Screamer 2* (Milestone /
+Virgin Interactive, 1996) for today's PCs: drawn by the graphics card at your screen's
+resolution, smoothed if you want it, smooth on fast screens, with the CD's music straight from
+your copy of the game.
 
-- **Screamer**: the whole game — the six tracks and their reversed versions, the championship,
-  time attack, cone carnage and slalom, replays, records, the menus and the intro, with the
-  original's sound and its FM music.
-- **Screamer 2**: the game's own 3D menu with its rooms, arcade, the championship's four
-  leagues, time attack with its ghost car, the seven tracks with their weather, the car set-ups,
-  damage, replays and best times, the attract race, its sound and the CD's music — in 320 x 200
-  or 640 x 400, as its two original programs. Not in it: two players and the network game, and
-  the 65,000-colour versions.
+It is built on **[OpenScreamer](https://github.com/ItsDanik/openscreamer)** by Danik, a
+reimplementation of both games written by reading the original programs. OpenScreamer keeps to
+the original as closely as it can and also runs on the MiSTer FPGA; this project goes its own
+way towards a modern remaster. It is not OpenScreamer, it is not affiliated with it, and it does
+not run on the MiSTer.
 
-**Beta.** Version numbers look like `0.4.12b`; `openscreamer --version` prints it.
+**Beta.** `openscreamer --version` prints the version.
+
+## Thanks
+
+Almost everything that makes the games run here is Danik's work: reading both original programs,
+every file format, the driving, the opponents, the cameras, the menus, the championship, the
+replays, the sound and the FM music. His commits are kept in this repository's history as he
+made them. This project adds to that; it would not exist without it.
+
+If you like what you see, have a look at
+[OpenScreamer](https://github.com/ItsDanik/openscreamer) and its
+[MiSTer core](https://github.com/ItsDanik/openscreamer_MiSTer), and consider supporting Danik
+on [Patreon](https://www.patreon.com/itsdanik).
+
+Please report problems with this project here, not to OpenScreamer.
+
+## What is new here
+
+- **The graphics card draws the races** (OpenGL 4.5) — *Screamer*'s races and its 3D menu at
+  the window's own resolution, up to 4K (RES NATIVE). Without OpenGL 4.5 the program draws the
+  pictures itself, as before.
+- **WINDOW / FULLSCREEN** — full screen is a borderless window at the desktop's resolution; the
+  monitor's mode is never changed.
+- **FILTERING** (smoothed textures) and **MSAA** 2x / 4x / 8x (smoothed edges), each switchable;
+  off is the original's look.
+- **Smooth motion on fast screens**: the race still moves in the original's 1/50 s steps, but
+  every picture is drawn between the two steps around it, so a 120 Hz or 144 Hz screen shows
+  every frame moving (*Screamer*).
+- **Screamer's CD music** is played straight from GOG's image of the disc, as *Screamer 2*'s.
+- Fixes: the cars' wheels showing through the body, the front wheels steering the wrong way,
+  the track's detail set, the letters' spacing at 640 x 400, the nearest palette colour on
+  Windows.
+- The menu's GRAPHICS page holds all of it: RES, WINDOW / FULLSCREEN, DETAIL, FILTERING, MSAA.
+
+**Planned:** 16:9 with the instruments in the corners and the cockpits extended to the sides;
+high-resolution cockpits; a menu split into DISPLAY, GRAPHICS and AUDIO; smooth motion for
+*Screamer 2* too. The 320 x 200 mode and the MiSTer code will be removed here — they stay in
+OpenScreamer, where they belong.
 
 ## You need the original games
 
-OpenScreamer contains no part of either game. Both are still sold (GOG, Steam): buy them and copy
-each game's folder — the one that holds `DATA` and `GFX` — next to the program, *Screamer*'s as
-`screamer` and *Screamer 2*'s as `screamer2` (or name one with `-data DIR`). The games' own files
-are read as they are; nothing has to be unpacked. At every start the files are checked and
-anything missing is listed by name.
+This project contains no part of either game. Both are still sold (GOG, Steam): buy them. The
+program reads the games' own files as they are; nothing has to be unpacked. Give it the folder
+that holds `DATA` and `GFX`:
 
-With both folders there, a first page asks which game to play (the last one chosen is lit);
-`-game 1` or `-game 2` starts one straight away.
+- GOG's folders work as they are: `openscreamer -data "C:\GOG Games\Screamer"`, or
+- copy the folders next to the program, *Screamer*'s as `screamer` and *Screamer 2*'s as
+  `screamer2`. With both there, a first page asks which game to play; `-game 1` or `-game 2`
+  starts one straight away.
 
-**Screamer 2's music** was the CD's audio tracks. Put them in a folder `music` inside
-`screamer2`, one file a track, named by the track's number on the disc: `track_02.ogg`,
-`track_03.ogg` ... (`.ogg`, `.mp3` or `.wav`). Without them the game plays without music.
-
-## Download
-
-Built programs are on the [releases page](https://github.com/ItsDanik/openscreamer/releases):
-
-- **Linux** (x86-64): `openscreamer-<version>-linux-x86_64.tar.gz`. It needs SDL2 installed
-  (`libsdl2-2.0-0`, `SDL2` or `sdl2`, by distribution) and runs on any distribution of 2018 or
-  later. Unpack it, put the games' folders next to the program as `screamer` and `screamer2`, start
-  `./openscreamer`.
-- **Windows** (10 or 11, 64-bit): `openscreamer-<version>-windows-x86_64.zip`. Unpack it, put the
-  games' folders next to `openscreamer.exe` as `screamer` and `screamer2`, and double-click the
-  program. Settings and saves go to `%APPDATA%\openscreamer`.
+**The music** was the CD's audio tracks. GOG's copies have the disc as an image (`SCREAM.gog` /
+`GAME.GOG` with its cue sheet `SCREAM.DAT` / `GAME.DAT`), and it is played from there. Files
+named `track_02.ogg` ... (`.mp3` or `.wav` do as well) in a folder `music` inside the game's
+folder go first. *Screamer* without its CD tracks plays its FM songs.
 
 ## Building
 
-SDL2, CMake and a C compiler:
+Windows is what this is made and tested on. With [MSYS2](https://www.msys2.org/) (UCRT64):
 
 ```sh
+pacman -S mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-cmake mingw-w64-ucrt-x86_64-ninja mingw-w64-ucrt-x86_64-SDL2
 cmake -S port -B port/build && cmake --build port/build
-port/build/openscreamer
+port/build/openscreamer -data "C:/GOG Games/Screamer"
 ```
 
-`openscreamer --help` lists the options, the keys and the game controller's buttons.
-Settings and saves go to `~/.config/openscreamer` (or `-home DIR`).
+Linux should build the same way with SDL2, CMake and a C compiler (not tested here).
 
-The picture's size is chosen in each game's settings: RESOLUTION in *Screamer*'s OPTIONS and in
-*Screamer 2*'s GAME SETTINGS (320 x 200 or 640 x 400, both shown 4:3); `-res low|high` sets it for
-one run.
+`openscreamer --help` lists the options, the keys and the game controller's buttons. Settings and
+saves go to `%APPDATA%\openscreamer` (Linux: `~/.config/openscreamer`, or `-home DIR`). The
+program and its files are still called `openscreamer`; they will be renamed.
 
 ## What is in here
 
 | | |
 |---|---|
-| `port/` | the program (C, SDL2) |
-| `tools/` | what was used to read the original: unpackers for its files, Ghidra scripts, viewers |
+| `port/` | the program (C, SDL2, OpenGL) |
+| `tools/` | what was used to read the originals: unpackers for their files, Ghidra scripts, viewers, test helpers |
 | `CLAUDE.md` | the summary of the whole project: the working rules, the file formats, where to look |
 | `docs/NOTES.md`, `docs/NOTES2.md` | the full record for each game: every file format, where each rule of the game is in the original program, how it was checked, what is exact and what is the port's own |
+| `docs/GPU.md` | the graphics card's renderer: how it draws, how it is checked against the original's pictures |
 | `VERSION`, `tools/version.sh` | the version: the number in `VERSION`, its last part raised by one with every commit since |
-
-The same source runs on the MiSTer FPGA as a hybrid core:
-[openscreamer_MiSTer](https://github.com/ItsDanik/openscreamer_MiSTer) (the code for it is in
-`port/src/mister.c` and behind `MISTER_HYBRID`; an ordinary build has none of it).
-`tools/release_linux.sh` and `tools/release_windows.sh` (MinGW-w64, on Linux) make the releases.
 
 ## Credits
 
 - *Screamer* is by Graffiti (later Milestone), *Screamer 2* by Milestone, both published by
   Virgin Interactive Entertainment. This project is not affiliated with them.
-- Written by Danik with Claude (Anthropic); the first day's groundwork with DeepSeek.
+- [OpenScreamer](https://github.com/ItsDanik/openscreamer), on which all of this is built: written
+  by Danik with Claude (Anthropic); the first day's groundwork with DeepSeek.
+- Screamer Remastered: Dennis Bohn with Claude (Anthropic).
 - The music's FM chip is [Nuked OPL3](https://github.com/nukeykt/Nuked-OPL3) by Nuke.YKT
   (`port/src/nuked/`, LGPL 2.1 or later).
-- *Screamer 2*'s music files are read with [stb_vorbis](https://github.com/nothings/stb) by Sean
-  Barrett and [dr_mp3 / dr_wav](https://github.com/mackron/dr_libs) by David Reid
-  (`port/src/third_party/`, public domain or MIT-0).
+- The music files are read with [stb_vorbis](https://github.com/nothings/stb) by Sean Barrett and
+  [dr_mp3 / dr_wav](https://github.com/mackron/dr_libs) by David Reid (`port/src/third_party/`,
+  public domain or MIT-0).
 
 ## License
 
-GPL-3.0, see `LICENSE`. That covers this source only, not the games or their data.
-`port/src/nuked/` keeps its own licence (LGPL 2.1 or later), and `port/src/third_party/` its
-own (public domain or MIT-0), stated in their files.
+GPL-3.0, as OpenScreamer; see `LICENSE`. That covers this source only, not the games or their
+data. `port/src/nuked/` keeps its own licence (LGPL 2.1 or later), and `port/src/third_party/`
+its own (public domain or MIT-0), stated in their files.

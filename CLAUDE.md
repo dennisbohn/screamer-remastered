@@ -1,3 +1,12 @@
+# Screamer Remastered (built on OpenScreamer)
+
+**This repository is `github.com/dennisbohn/screamer-remastered`** (since 2026-10-24): Dennis
+Bohn's remaster, its own project, built on Danik's OpenScreamer (`upstream` =
+`github.com/ItsDanik/openscreamer`, whose history is kept here). Goals: graphics card, any
+resolution, 16:9, smooth motion, HD art; the 320 x 200 mode and the MiSTer code are to be
+removed. No pull requests to OpenScreamer. Dennis tests and decides; what follows still
+describes OpenScreamer's working agreement (Danik) where it has not been rewritten yet.
+
 # OpenScreamer — porting *Screamer* (1995, MS-DOS) to Linux, Windows and the MiSTer
 
 Reverse-engineering + reimplementation. A native SDL2 port (Linux x86/ARM, Windows), and
