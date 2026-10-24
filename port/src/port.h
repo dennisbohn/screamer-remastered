@@ -32,7 +32,6 @@ FILE *os_config_open(const char *name);  /* a file of the game's CONFIG folder, 
 int   os_exists(const char *path);      /* can it be read?  (also inside the game's containers) */
 const char *os_data_dir(void);
 const char *os_home_dir(void);
-const char *os_program_dir(void);     /* the folder the program is in */
 
 /* memory that os_state_restore() frees: everything the port allocates */
 void *os_malloc(size_t n);

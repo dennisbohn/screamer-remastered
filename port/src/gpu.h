@@ -24,9 +24,6 @@ void   gpu_present(void);               /* to the window, 4:3 with bars, and swa
 int    gpu_check(const uint8_t *pixels, int w, int h, const uint32_t pal[256]);     /* a test: pixels shown otherwise than pal[pixels] (-1: not done) */
 void   gpu_area(int *w, int *h);        /* M3: the window's part the picture's shape fills, in its own pixels */
 void   gpu_shape(int w, int h);         /* M4: the picture's size (fb's), shown at 6:5 a pixel: 640 x 400 is 4:3 */
-void   gpu_cockpit(const uint8_t *rgba, int w, int h);   /* M4: a painted cockpit, RGBA, sRGB (NULL: none) */
-void   gpu_cockpit_at(float x0, float cols);              /* ... this picture: fb's columns it covers, all rows */
-void   gpu_needle(float x0, float y0, float x1, float y1, float w0, float w1, uint32_t rgb);   /* ... a needle over it, fb's units: from hub to tip, half widths there */
 void   gpu_shot_next(const char *path); /* a test: the next picture shown also into a PPM, at its scene's size */
 /* M2: THE 3D SCENE ON THE CARD -- the triangles raster_job would fill, in the same order */
 enum { GPU_KEYED = 1, GPU_GLASS = 2, GPU_WRAPS = 4, GPU_SPRITE = 8 };

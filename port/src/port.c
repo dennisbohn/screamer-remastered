@@ -58,7 +58,6 @@ typedef struct {
     int    both;                        /* both games were found and none was asked for */
     char   other[800];                  /* (then the other game's folder: os_select_game) */
     char   dir_data[800], dir_gfx[800], dir_anims[800];
-    char   exe_dir[600];                /* the program's own folder */
     struct pack { char name[16]; unsigned char *bytes; long len, dir; int nent; unsigned stamp; } pack[PACKS];
     unsigned pack_clock;
 } keep;
@@ -623,7 +622,6 @@ void os_init(int argc, char **argv)
     ssize_t n = readlink("/proc/self/exe", exe, sizeof exe - 1);
     if (n > 0) { exe[n] = 0; char *s = strrchr(exe, '/'); if (s) *s = 0; } else strcpy(exe, ".");
 #endif
-    snprintf(K->exe_dir, sizeof K->exe_dir, "%s", exe);
     if (game != 1 && game != 2) game = 0;
     if (data) {
         snprintf(K->data, sizeof K->data, "%s", data);
@@ -719,7 +717,6 @@ int   os_argc(void) { return K->has_next ? K->next_argc : K->argc; }
 char **os_argv(void) { return K->has_next ? K->next_argv : K->argv; }
 const char *os_data_dir(void) { return K ? K->data : "build/dec"; }
 const char *os_home_dir(void) { return K ? K->home : "."; }
-const char *os_program_dir(void) { return K && K->exe_dir[0] ? K->exe_dir : "."; }
 int   os_has_next(void) { return K->has_next; }
 void  os_next_done(void) { K->has_next = 0; }
 void *os_slot(int id) { return K->slot[id & 15]; }

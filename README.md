@@ -14,15 +14,14 @@ report problems here, not to OpenScreamer.
 - Window or borderless full screen
 - Options in DISPLAY, GRAPHICS and AUDIO
 - Texture filtering and MSAA (2x / 4x / 8x), switchable
-- 16:9 and wider, the instruments at the edges (*Screamer*)
+- 16:9 and wider, the instruments at the edges, or 4:3 (*Screamer*)
 - Smooth motion on high refresh rates (*Screamer*)
 - *Screamer*'s CD music from GOG's disc image
 - Fixes: wheels showing through the body, front wheels steering the wrong way, the track's
   detail set, text spacing at 640 x 400, palette colours on Windows
 
-**Planned:** painted cockpit sides for wide screens, high-resolution cockpits, smooth motion for
-*Screamer 2*. *Screamer 2* is playable as in OpenScreamer, at 640 x 400; the improvements are
-for *Screamer* for now.
+**Planned:** smooth motion for *Screamer 2*. *Screamer 2* is playable as in OpenScreamer, at
+640 x 400; the improvements are for *Screamer* for now.
 
 ## You need the original games
 

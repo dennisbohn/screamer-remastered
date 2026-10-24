@@ -32,7 +32,6 @@
     X(void, Scissor, (GLint, GLint, GLsizei, GLsizei)) \
     X(void, Enable, (GLenum)) \
     X(void, Disable, (GLenum)) \
-    X(void, BlendFunc, (GLenum, GLenum)) \
     X(void, ClearColor, (GLfloat, GLfloat, GLfloat, GLfloat)) \
     X(void, Clear, (GLbitfield)) \
     X(void, ClearBufferfv, (GLenum, GLint, const GLfloat *)) \
@@ -140,7 +139,7 @@ typedef struct {
     GLuint prog;
     GLint  size, factor, gscale, smg_rows, tie, half, cy, focal;     /* the scene's passes */
     GLint  mode, sky0, sky1, sky2;                                    /* the backdrop's */
-    GLint  ssize, area, flip, rgb, samples, to, fade, art;            /* the picture's (draw_mixed) */
+    GLint  ssize, area, flip, rgb, samples, to, fade;                 /* the picture's (draw_mixed) */
 } gpu_prog;
 
 /* M3: a texture frame made a colour layer: where its bytes are, its extent, its kind */
@@ -177,13 +176,6 @@ typedef struct {
     GLuint layer_tex, lut_tex;
     int    layer_w, layer_h, flip;
     int    scene_card, overlay_ok;  /* this picture: the card's scene shown (larger, filtered, MSAA), and the flat things for it */
-    GLuint art_tex;                 /* M4: the painted cockpit (gpu_cockpit), where the flat layer says 128 + */
-    int    art_on;
-    float  art_x0, art_cols;
-    GLuint prog_needle;             /* ... and the needles over it (gpu_needle), this picture's */
-    int    nneedle;
-    float  needle[4][6];
-    uint32_t needle_rgb[4];
     int    last_card, last_overlay; /* the picture shown last (gpu_again) */
     int    vw, vh, scw, sch;        /* the scene's: fb's size, the card's */
     /* M3: FILTERING and MSAA (gpu_quality) */
@@ -197,7 +189,6 @@ typedef struct {
     int    mw, mh, ms, m_rgb, ms_got;   /* their size, samples and colour asked for, the samples made */
     GLuint pal_tex, smg_fit, lut_fit;   /* the scene's palette (256 x 1); SMG's rows and the darkenings as lines (rows_fit) */
     uint32_t pal_now[256], smg_fit_sum;
-    uint32_t pal_seen[256];             /* the last scene's palette, FILTERING or not (the darkenings' lines: gpu_overlay) */
     int    pal_set;
     float  fade, to_k;              /* the picture's fades (gpu_fades) */
     uint32_t to;
@@ -537,9 +528,8 @@ static const char *const g_mix_src =
     "#endif\n"
     "layout(binding = 4) uniform usampler2D luts;\n"
     "layout(binding = 7) uniform sampler2D lut_fit;\n"
-    "layout(binding = 8) uniform sampler2D art;\n"         /* the painted cockpit, sRGB, mipmapped */
     "uniform ivec2 size, ssize, flip;\n"
-    "uniform vec4 area, u_art;\n"
+    "uniform vec4 area;\n"
     "uniform int u_rgb;\n"
     "uniform vec4 u_to;\n"                                /* the fades: towards this colour so far, then */
     "uniform float u_fade;\n"                             /* ... to black (show_palette's) */
@@ -550,17 +540,6 @@ static const char *const g_mix_src =
     "    vec2 pic = vec2(at.x, 1.0 - at.y);\n"
     "    ivec2 p = clamp(ivec2(floor(pic * vec2(size))), ivec2(0), size - 1);\n"
     "    uint mode = texelFetch(layer, p, 0).r, n;\n"
-    "    if (mode >= 128u) {\n"                                /* the cockpit: painted, at this pixel's own place */
-    "        mode -= 128u;\n"
-    "        vec4 a = u_art.z > 0.0 ? texture(art, vec2((pic.x * float(size.x) - u_art.x) / u_art.y, pic.y)) : vec4(0.0);\n"
-    "        if (a.a >= 0.5) {\n"
-    "            vec3 c = enc(a.rgb);\n"
-    "            if (mode >= 2u) c *= texelFetch(lut_fit, ivec2(0, int(mode) - 2), 0).rgb;\n"
-    "            colour = vec4((c + (u_to.rgb - c) * u_to.a) * u_fade, 1.0);\n"
-    "            return;\n"
-    "        }\n"
-    "        mode = 1u;\n"                                     /* (not painted here: fb's own) */
-    "    }\n"
     "    if (mode == 1u) n = texelFetch(picture, p, 0).r;\n"
     "    else {\n"
     "        vec2 q = vec2(flip.x != 0 ? 1.0 - pic.x : pic.x, flip.y != 0 ? 1.0 - pic.y : pic.y);\n"
@@ -591,75 +570,6 @@ static const char *const g_mix_src =
     "    }\n"
     "    colour = texelFetch(palette, ivec2(int(n), 0), 0);\n"
     "}\n";
-
-static GLuint program(const char *vsrc, const char *fsrc);
-
-/* M4: the needles over a painted cockpit, at the screen's own pixels: each a wedge from the hub
-   to the tip (fb's units), its edge smoothed over one screen pixel */
-static const char *const g_needle_src =
-    "uniform ivec2 size;\n"
-    "uniform vec4 area, u_to;\n"
-    "uniform float u_fade;\n"
-    "uniform int u_n;\n"
-    "uniform vec4 u_seg[4], u_col[4];\n"                     /* hub x, y, tip x, y; rgb, then the half widths in u_wid */
-    "uniform vec2 u_wid[4];\n"
-    "out vec4 colour;\n"
-    "void main() {\n"
-    "    vec2 at = (gl_FragCoord.xy - area.xy) / area.zw;\n"
-    "    vec2 p = vec2(at.x, 1.0 - at.y) * vec2(size);\n"
-    "    float px = float(size.x) / area.z, cover = 0.0;\n"
-    "    vec3 c = vec3(0.0);\n"
-    "    for (int i = 0; i < u_n; i++) {\n"
-    "        vec2 a = u_seg[i].xy, ab = u_seg[i].zw - a;\n"
-    "        float t = clamp(dot(p - a, ab) / max(dot(ab, ab), 1e-6), 0.0, 1.0);\n"
-    "        float k = clamp((mix(u_wid[i].x, u_wid[i].y, t) - length(p - a - ab * t)) / px + 0.5, 0.0, 1.0);\n"
-    "        if (k > cover) { cover = k; c = u_col[i].rgb; }\n"
-    "    }\n"
-    "    if (cover <= 0.0) discard;\n"
-    "    colour = vec4((c + (u_to.rgb - c) * u_to.a) * u_fade, cover);\n"
-    "}\n";
-
-void gpu_needle(float x0, float y0, float x1, float y1, float w0, float w1, uint32_t rgb)
-{
-    if (!gpu() || G->nneedle >= 4) return;
-    G->needle_rgb[G->nneedle] = rgb;
-    float *n = G->needle[G->nneedle++];
-    n[0] = x0; n[1] = y0; n[2] = x1; n[3] = y1; n[4] = w0; n[5] = w1;
-}
-
-static void needles_draw(int w)
-{
-    if (!G->nneedle) return;
-    if (!G->prog_needle) G->prog_needle = program(g_vertex_src, g_needle_src);
-    if (!G->prog_needle) { G->nneedle = 0; return; }
-    const GLuint p = G->prog_needle;
-    G->UseProgram(p);
-    G->Uniform2i(G->GetUniformLocation(p, "size"), G->pic_w, G->pic_h);
-    GLint vp[4];
-    G->GetIntegerv(GL_VIEWPORT, vp);
-    G->Uniform4f(G->GetUniformLocation(p, "area"), (float)vp[0], (float)vp[1], (float)vp[2], (float)vp[3]);
-    G->Uniform4f(G->GetUniformLocation(p, "u_to"), (float)(G->to >> 16 & 255) / 255.0f, (float)(G->to >> 8 & 255) / 255.0f, (float)(G->to & 255) / 255.0f, G->to_k);
-    G->Uniform1f(G->GetUniformLocation(p, "u_fade"), G->fade);
-    G->Uniform1i(G->GetUniformLocation(p, "u_n"), G->nneedle);
-    for (int i = 0; i < G->nneedle; i++) {
-        char name[16];
-        const float *n = G->needle[i];
-        const float fx = (G->flip & 1) ? (float)G->pic_w : 0.0f, sx = (G->flip & 1) ? -1.0f : 1.0f;
-        const uint32_t rgb = G->needle_rgb[i];
-        snprintf(name, sizeof name, "u_seg[%d]", i);
-        G->Uniform4f(G->GetUniformLocation(p, name), fx + sx * n[0], n[1], fx + sx * n[2], n[3]);
-        snprintf(name, sizeof name, "u_col[%d]", i);
-        G->Uniform4f(G->GetUniformLocation(p, name), (float)(rgb >> 16 & 255) / 255.0f, (float)(rgb >> 8 & 255) / 255.0f, (float)(rgb & 255) / 255.0f, 1.0f);
-        snprintf(name, sizeof name, "u_wid[%d]", i);
-        G->Uniform2f(G->GetUniformLocation(p, name), n[4], n[5]);
-    }
-    (void)w;
-    G->Enable(GL_BLEND);
-    G->BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-    G->BindVertexArray(G->vao);
-    G->DrawArrays(GL_TRIANGLES, 0, 3);
-    G->Disable(GL_BLEND);
-}
 
 /* M3, MSAA: the scene back at fb's size -- each pixel the first sample of the card's pixel at the
    middle of fb's (as the nearest blit for one sample a pixel) */
@@ -960,17 +870,15 @@ static void draw_mixed(int x, int y, int w, int h)
     G->Uniform1i(p->samples, G->samples);
     G->Uniform4f(p->to, (float)(G->to >> 16 & 255) / 255.0f, (float)(G->to >> 8 & 255) / 255.0f, (float)(G->to & 255) / 255.0f, G->to_k);
     G->Uniform1f(p->fade, G->fade);
-    G->Uniform4f(p->art, G->art_x0, G->art_cols, G->art_on ? 1.0f : 0.0f, 0.0f);
-    const GLuint tex[9] = { G->picture, G->palette, G->layer_tex, ms ? G->m_index : G->t_index, G->lut_tex,
-                            !G->filter ? 0 : ms ? G->m_colour : G->t_colour, 0, G->filter || G->art_on ? G->lut_fit : 0, G->art_on ? G->art_tex : 0 };
-    for (int k = 0; k < 9; k++) {
+    const GLuint tex[8] = { G->picture, G->palette, G->layer_tex, ms ? G->m_index : G->t_index, G->lut_tex,
+                            !G->filter ? 0 : ms ? G->m_colour : G->t_colour, 0, G->filter ? G->lut_fit : 0 };
+    for (int k = 0; k < 8; k++) {
         G->ActiveTexture(GL_TEXTURE0 + (GLenum)k);
         G->BindTexture(ms && (k == 3 || k == 5) ? GL_TEXTURE_2D_MULTISAMPLE : GL_TEXTURE_2D, tex[k]);
     }
     G->BindVertexArray(G->vao);
     G->DrawArrays(GL_TRIANGLES, 0, 3);
     G->ActiveTexture(GL_TEXTURE0);
-    needles_draw(w);
 }
 
 void gpu_overlay(const uint8_t *layer, const uint8_t *luts, int n, int flip)
@@ -980,7 +888,7 @@ void gpu_overlay(const uint8_t *layer, const uint8_t *luts, int n, int flip)
     static const uint8_t none[256];
     int tw = 0, th = 0;
     bytes_up(G->lut_tex, &tw, &th, 256, n > 0 ? n : 1, n > 0 ? luts : none);
-    if ((G->filter || G->art_on) && n > 0) rows_fit(G->lut_fit, luts, n, G->pal_seen, 1);
+    if (G->filter && n > 0) rows_fit(G->lut_fit, luts, n, G->pal_now, 1);
     G->flip = flip;
     G->overlay_ok = 1;
 }
@@ -1049,7 +957,6 @@ void gpu_present(void)
     }
     G->last_card = G->scene_card; G->last_overlay = G->overlay_ok;
     G->scene_card = G->overlay_ok = 0;
-    G->nneedle = 0;
     SDL_GL_SwapWindow(G->win);
 }
 
@@ -1098,10 +1005,10 @@ static int prog_make(gpu_prog *p, GLuint prog)
     if (!prog) return 0;
     static const char *const name[] = { "u_size", "u_factor", "u_gscale", "u_smg_rows", "u_tie", "u_half", "u_cy", "u_focal",
                                         "u_mode", "u_sky0", "u_sky1", "u_sky2",
-                                        "ssize", "area", "flip", "u_rgb", "u_samples", "u_to", "u_fade", "u_art" };
+                                        "ssize", "area", "flip", "u_rgb", "u_samples", "u_to", "u_fade" };
     GLint *at[] = { &p->size, &p->factor, &p->gscale, &p->smg_rows, &p->tie, &p->half, &p->cy, &p->focal,
                     &p->mode, &p->sky0, &p->sky1, &p->sky2,
-                    &p->ssize, &p->area, &p->flip, &p->rgb, &p->samples, &p->to, &p->fade, &p->art };
+                    &p->ssize, &p->area, &p->flip, &p->rgb, &p->samples, &p->to, &p->fade };
     for (size_t k = 0; k < sizeof at / sizeof at[0]; k++) *at[k] = G->GetUniformLocation(prog, name[k]);
     if (p->size < 0) p->size = G->GetUniformLocation(prog, "size");      /* (the picture's is "size") */
     return 1;
@@ -1458,25 +1365,6 @@ static void scene_targets_lo(int w, int h)
 }
 
 static int g_shape_w = 640, g_shape_h = 400;
-
-/* M4: the painted cockpit, as large as it is, with its smaller copies (the card picks the one for
-   the screen's size); see-through where its alpha is under a half */
-void gpu_cockpit(const uint8_t *rgba, int w, int h)
-{
-    if (!gpu()) return;
-    G->art_on = 0;
-    if (!rgba || w <= 0 || h <= 0) return;
-    while (G->GetError() != GL_NO_ERROR) {}
-    if (!G->art_tex) G->GenTextures(1, &G->art_tex);
-    G->BindTexture(GL_TEXTURE_2D, G->art_tex);
-    G->TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 1000);
-    G->PixelStorei(GL_UNPACK_ALIGNMENT, 4);
-    G->TexImage2D(GL_TEXTURE_2D, 0, GL_SRGB8_ALPHA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
-    G->GenerateMipmap(GL_TEXTURE_2D);
-    G->BindSampler(8, G->samp_clamp);
-    G->art_on = G->GetError() == GL_NO_ERROR;
-}
-void gpu_cockpit_at(float x0, float cols) { if (gpu()) { G->art_x0 = x0; G->art_cols = cols > 1.0f ? cols : 1.0f; } }
 void gpu_shape(int w, int h) { if (w > 0 && h > 0) { g_shape_w = w; g_shape_h = h; } }
 
 /* the window's part the picture fills: as large as it fits, in the middle (640 x 400 is 4:3: fb's
@@ -1640,7 +1528,6 @@ int gpu_scene(const gpu_view *v, const gpu_tri *t, int n, uint8_t *fb, float *zb
     const float fx = (float)rw / (float)w, fy = (float)rh / (float)h;
     /* M3: FILTERING (the colour too, from the frames' colour layers of this palette) and MSAA */
     const int colour = G->colour_ok && v->pal;
-    if (v->pal) memcpy(G->pal_seen, v->pal, sizeof G->pal_seen);
     G->filter = colour && G->want_filter;
     G->samples = colour ? samples_wanted() : 1;
     if (G->filter && (!G->pal_set || memcmp(G->pal_now, v->pal, sizeof G->pal_now))) {

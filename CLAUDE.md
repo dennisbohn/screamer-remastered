@@ -13,11 +13,11 @@ What changed from OpenScreamer (2026-10-23..24; the details in `docs/GPU.md` and
   the MiSTer code with its tall and wide pictures. Screamer 2 runs as it is, at 640 x 400; the
   work is on Screamer 1 for now.
 - A race is as wide as the window (16:9 = 854 x 400; `pic_follow`, the flat things at `g_ox`:
-  LAY_LEFT / MID / RIGHT; `OS_ASPECT=16:9` a test); menus stay 4:3. The cockpit's sides are drawn
-  out (`cockpit_widen`), or painted ones are loaded: `<home or program>/cockpits/COCKnnXH_sides.png`
-  (the sides only, the game's middle put in) or `_full.png`, 21:9 any size (stb_image); on the card
-  shown at the screen's resolution (flat layer code 128 +: `cockpit_mark`, `gpu_cockpit`; the
-  needles `gpu_needle`), else put to the palette.
+  LAY_LEFT / MID / RIGHT; `OS_ASPECT=16:9` a test; DISPLAY's ASPECT 4:3, `aspect=4:3`, keeps a race
+  4:3); menus stay 4:3. The cockpit's sides are drawn out, the middle as it is (`cockpit_widen`).
+  2026-10-24, Dennis: no AI-made or painted cockpits -- a new Screamer is out, too touchy; the
+  loader for them, the card's layer at the screen's resolution and the smoothed needles were built
+  and taken out again (commits f8f9b65, 862fb8d).
 - The picture between two 50 Hz steps (`lerp_apply`), OPTIONS as DISPLAY / GRAPHICS / AUDIO, the CD
   music from GOG's disc image, the program's own name and home (`screamer-remastered`, the old
   OpenScreamer home taken over once).

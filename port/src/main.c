@@ -34,7 +34,6 @@
 #include "port.h"
 #include "s2_port.h"
 #include "controls.h"
-#include "third_party/stb_image.h"         /* (PNG: the painted cockpits; built in third_party/decoders.c) */
 #ifdef OS_GPU
 #include "gpu.h"
 #endif
@@ -450,8 +449,7 @@ static int g_lay_want, g_lay_on, g_lay_flip, g_lay_n;
 static uint8_t g_lay_scene[FB_MAXW * FB_MAXH], g_lay_dk[FB_MAXW * FB_MAXH];
 /* a flat thing has drawn the pixel (LAY_PUT, LAY_RUN in the routines that put pixels down): its
    own colour, whatever the scene's is -- without it a logo in white over the white of a banner
-   was taken for the scene there, and the card's banner showed through.  2: the painted cockpit's
-   (cockpit_mark), shown at the screen's resolution and darkened as the scene is */
+   was taken for the scene there, and the card's banner showed through */
 static uint8_t g_lay_op[FB_MAXW * FB_MAXH];
 #define LAY_PUT(i)    (g_lay_on ? (void)(g_lay_op[(i)] = 1) : (void)0)
 #define LAY_RUN(p, n) (g_lay_on ? (void)memset(g_lay_op + ((p) - fb), 1, (size_t)(n)) : (void)0)
@@ -484,7 +482,7 @@ static inline void lay_dark(int i, const uint8_t *t)
 {
     if (g_lay_on) {
         const int k = g_lay_dk[i];
-        if (k != 255 && g_lay_op[i] != 1 && fb[i] == (k ? g_lay_lut[k - 1][g_lay_scene[i]] : g_lay_scene[i]))
+        if (k != 255 && !g_lay_op[i] && fb[i] == (k ? g_lay_lut[k - 1][g_lay_scene[i]] : g_lay_scene[i]))
             g_lay_dk[i] = (uint8_t)lay_then(k, t);
     }
     fb[i] = t[fb[i]];
@@ -497,8 +495,7 @@ static void lay_end(void)
     static uint8_t layer[FB_MAXW * FB_MAXH];
     for (int i = 0; i < FB_W * FB_H; i++) {          /* (and where fb no longer shows the scene: a flat thing not marked) */
         const int k = g_lay_dk[i];
-        layer[i] = (uint8_t)(g_lay_op[i] == 1 || k == 255 || fb[i] != (k ? g_lay_lut[k - 1][g_lay_scene[i]] : g_lay_scene[i]) ? 1
-                             : (g_lay_op[i] == 2 ? 128 : 0) + (k ? 1 + k : 0));
+        layer[i] = (uint8_t)(g_lay_op[i] || k == 255 || fb[i] != (k ? g_lay_lut[k - 1][g_lay_scene[i]] : g_lay_scene[i]) ? 1 : k ? 1 + k : 0);
     }
     gpu_overlay(layer, &g_lay_lut[0][0], g_lay_n, g_lay_flip);
 }
@@ -526,8 +523,8 @@ static void os_go(int argc, const char *a1, const char *a2)
 /* rows: the card draws the scene with this many rows (resolution=<rows>; 0 = native, as many as the
    window has); display: 1 the whole screen, as the desktop is (no other screen mode, ever);
    filtering, msaa: the card's (0, or 2, 4, 8 samples) */
-static struct { int diff, laps, speech, music, vol_cd, vol_fx, vol_mu, detail, game, renderer, gpu_starting, rows, display, filtering, msaa, music_fm; } g_cfg =
-    { 1, 0, 1, 1, 0x6000, 0x6000, 0x6000, 2, 1, RENDERER_DEFAULT, 0, 0, 0, 0, 0, 0 };
+static struct { int diff, laps, speech, music, vol_cd, vol_fx, vol_mu, detail, game, renderer, gpu_starting, rows, display, filtering, msaa, music_fm, narrow; } g_cfg =
+    { 1, 0, 1, 1, 0x6000, 0x6000, 0x6000, 2, 1, RENDERER_DEFAULT, 0, 0, 0, 0, 0, 0, 0 };
 static int g_res_rows;                       /* this run: g_cfg.rows; -1 fb's own 640 x 400 (OS_RES=svga, a test) */
 /* key_accelerate= ... lines: a key's name in the place of the one in the game's CONTROLS.CFG (controls.c) */
 static char g_cfg_key[6][40];
@@ -546,6 +543,7 @@ static void cfg_load(void)
         if (sscanf(line, "resolution=%63s", val) == 1)          /* (native, and the old words svga, vga, high, low: 0) */
             g_cfg.rows = atoi(val) >= 240 && atoi(val) <= 8192 ? atoi(val) : 0;
         if (sscanf(line, "display=%63s", val) == 1) g_cfg.display = !strcmp(val, "fullscreen");
+        if (sscanf(line, "aspect=%63s", val) == 1) g_cfg.narrow = !strcmp(val, "4:3");   /* (narrow: a race 4:3 in any window) */
         if (sscanf(line, "filtering=%d", &n) == 1) g_cfg.filtering = n != 0;
         if (sscanf(line, "msaa=%d", &n) == 1) g_cfg.msaa = n >= 8 ? 8 : n >= 4 ? 4 : n >= 2 ? 2 : 0;
         if (sscanf(line, "difficulty=%d", &n) == 1) g_cfg.diff = n < 0 ? 0 : n > 3 ? 3 : n;
@@ -584,7 +582,7 @@ static void cfg_save(void)
     if (!f) return;
     fprintf(f, "detail=%s\nresolution=%s\ndifficulty=%d\nlaps=%d\nspeech=%d\nmusic=%d\n", g_detail_word[g_cfg.detail & 3],
             g_cfg.rows ? rows_word(g_cfg.rows) : "native", g_cfg.diff, g_cfg.laps, g_cfg.speech, g_cfg.music);
-    fprintf(f, "display=%s\n", g_cfg.display ? "fullscreen" : "window");
+    fprintf(f, "display=%s\naspect=%s\n", g_cfg.display ? "fullscreen" : "window", g_cfg.narrow ? "4:3" : "wide");
     fprintf(f, "volume_cd=%d\nvolume_fx=%d\nvolume_mu=%d\n", g_cfg.vol_cd, g_cfg.vol_fx, g_cfg.vol_mu);
     for (int k = 0; k < 6; k++) if (g_cfg_key[k][0]) fprintf(f, "%s=%s\n", g_cfg_key_word[k], g_cfg_key[k]);
     if (g_cfg.music_fm) fprintf(f, "music_fm=1\n");
@@ -5248,59 +5246,11 @@ static void pkc_draw_at(const int16_t *pic, int w, int split)
 
 static void pkc_draw(const int16_t *pic) { pkc_draw_at(pic, ART_W, 0); }
 
-static int16_t g_cockpit_wide[FB_MAXW * FB_MAXH];       /* the cockpit as wide as the picture (cockpit_widen) */
-static int g_cockpit_wide_w, g_cockpit_wide_loads = -1, g_cockpit_sent = -1;
-
-/*
- * PAINTED COCKPITS FOR A WIDER PICTURE (the port's own).  <home>/cockpits/ or <the program's
- * folder>/cockpits/ may hold, for the cockpit COCKnnXH (nn the model, X the livery):
- *   COCKnnXH_sides.png   its sides alone, the middle 1280 columns see-through: the player's own
- *                        picture goes in the middle, these round it -- nothing of the game in them;
- *   COCKnnXH_full.png    a whole cockpit of its own, the middle as well.
- * 21:9, any size from 933 x 400 up (2240 x 960 is FLUX's, 4480 x 1920 for 2160 rows); see-through
- * or magenta (#FF00FF) is the windscreen.  Its colours are put to the race's palette.
- */
-#define ART_COLS 1120                           /* 21:9 at 400 rows, in the picture's columns */
-static unsigned char *g_cockpit_art;            /* RGBA */
-static int g_cockpit_art_full, g_cockpit_art_w, g_cockpit_art_h;
-
-static unsigned char *art_png(const char *name, int *w, int *h)
-{
-    const char *const where[2] = { os_home_dir(), os_program_dir() };
-    for (int i = 0; i < 2; i++) {
-        char path[1100];
-        snprintf(path, sizeof path, "%s/cockpits/%s", where[i], name);
-        FILE *f = fopen(path, "rb");
-        if (!f) continue;
-        fseek(f, 0, SEEK_END);
-        const long n = ftell(f);
-        fseek(f, 0, SEEK_SET);
-        unsigned char *b = n > 0 ? malloc((size_t)n) : NULL;
-        const int ok = b && fread(b, 1, (size_t)n, f) == (size_t)n;
-        fclose(f);
-        int c = 0;
-        unsigned char *px = ok ? stbi_load_from_memory(b, (int)n, w, h, &c, 4) : NULL;
-        free(b);
-        if (px) { printf("cockpit: %s (%d x %d)\n", path, *w, *h); return px; }
-    }
-    return NULL;
-}
-
 static void cockpit_load(int model, int livery)
 {
     char file[128];
     snprintf(file, sizeof file, "build/dec/GAME/COCK%02d%cL.PKC", model, livery ? 'B' : 'A');
     g_have_cockpit = pkc_load(file, g_cockpit);
-    if (g_cockpit_art) { stbi_image_free(g_cockpit_art); g_cockpit_art = NULL; }
-    g_cockpit_wide_w = 0; g_cockpit_sent = -1;
-    for (int full = 1; full >= 0 && !g_cockpit_art; full--) {
-        char name[64];
-        int w = 0, h = 0;
-        snprintf(name, sizeof name, "COCK%02d%cH_%s.png", model, livery ? 'B' : 'A', full ? "full" : "sides");
-        unsigned char *px = art_png(name, &w, &h);
-        if (px && (h < ART_H || abs(w * 9 - h * 21) > h / 50)) { printf("cockpit: %s is %d x %d, not 21:9\n", name, w, h); stbi_image_free(px); px = NULL; }
-        if (px) { g_cockpit_art = px; g_cockpit_art_full = full; g_cockpit_art_w = w; g_cockpit_art_h = h; }
-    }
 }
 
 /*
@@ -5310,130 +5260,33 @@ static void cockpit_load(int model, int livery)
  * numbers cannot be mixed, so the nearest column.  Made from the player's own picture, whenever
  * the width changes.
  */
-/* src, sw columns wide, drawn out to dst, dw wide: the middle's columns as they are, the outer
-   `edge` ones of either side stretched over what is left */
-static void widen(const int16_t *src, int sw, int16_t *dst, int dw, int edge)
+static int16_t g_cockpit_wide[FB_MAXW * FB_MAXH];
+static int g_cockpit_wide_w, g_cockpit_wide_loads = -1;
+static void cockpit_widen(void)
 {
-    const int keep = sw / 2 - edge, half_old = sw / 2, half_new = dw / 2;
+    const int W = FB_W, keep = 200, half_old = ART_W / 2, half_new = W / 2;
     const double reach_old = half_old - keep, reach_new = half_new - keep;
     const double c = (reach_new - reach_old) / (reach_new * reach_new);
-    for (int x = 0; x < dw; x++) {
+    for (int x = 0; x < W; x++) {
         const double d = fabs(x + 0.5 - half_new);
         const double t = d - keep, od = d <= keep ? d : keep + t - c * t * t;
         int ox = (int)floor(half_old + (x + 0.5 >= half_new ? od : -od));
         if (ox < 0) ox = 0;
-        if (ox > sw - 1) ox = sw - 1;
-        for (int y = 0; y < ART_H; y++) dst[y * dw + x] = src[y * sw + ox];
+        if (ox > ART_W - 1) ox = ART_W - 1;
+        for (int y = 0; y < ART_H; y++) g_cockpit_wide[y * W + x] = g_cockpit[y * ART_W + ox];
     }
+    g_cockpit_wide_w = W; g_cockpit_wide_loads = g_pkc_loads;
 }
-
-/* the painted cockpit as the picture's numbers, ART_COLS columns: each a block of its pixels (2 x
-   2.4 at 2240 x 960) averaged, put to the palette's nearest (remembered by its 15 bits); the sides'
-   middle the game's own picture */
-static void cockpit_art_numbers(int16_t *out)
-{
-    static uint8_t near[32768];
-    static unsigned char known[32768];
-    memset(known, 0, sizeof known);
-    const int w = ART_COLS, mid0 = (w - ART_W) / 2, aw = g_cockpit_art_w, ah = g_cockpit_art_h;
-    for (int y = 0; y < ART_H; y++) {
-        const int r0 = y * ah / ART_H, r1 = (y + 1) * ah / ART_H;
-        for (int x = 0; x < w; x++) {
-            if (!g_cockpit_art_full && x >= mid0 && x < mid0 + ART_W) { out[y * w + x] = g_cockpit[y * ART_W + x - mid0]; continue; }
-            int sum[3] = { 0, 0, 0 }, n = 0, holes = 0;
-            for (int r = r0; r < r1; r++)
-                for (int c = x * aw / w; c < (x + 1) * aw / w; c++) {
-                    const unsigned char *p = g_cockpit_art + 4 * ((size_t)r * (size_t)aw + (size_t)c);
-                    if (p[3] < 128 || (p[0] > 200 && p[1] < 60 && p[2] > 200)) { holes++; continue; }
-                    sum[0] += p[0]; sum[1] += p[1]; sum[2] += p[2]; n++;
-                }
-            if (n <= holes) { out[y * w + x] = -1; continue; }
-            const int rr = sum[0] / n, gg = sum[1] / n, bb = sum[2] / n;
-            const int key = (rr >> 3) << 10 | (gg >> 3) << 5 | (bb >> 3);
-            if (!known[key]) {
-                long best = LONG_MAX; int at = 0;
-                for (int i = 1; i < 256; i++) {         /* (0 is the game's see-through elsewhere: not taken) */
-                    const long dr = (long)(g_pal[i] >> 16 & 255) - rr, dg = (long)(g_pal[i] >> 8 & 255) - gg, db = (long)(g_pal[i] & 255) - bb;
-                    const long d = dr * dr + dg * dg + db * db;
-                    if (d < best) { best = d; at = i; }
-                }
-                near[key] = (uint8_t)at; known[key] = 1;
-            }
-            out[y * w + x] = near[key];
-        }
-    }
-}
-
-static void cockpit_widen(void)
-{
-    if (g_cockpit_art) {
-        static int16_t art[ART_COLS * ART_H];
-        const int w = ART_COLS;
-        cockpit_art_numbers(art);
-        if (FB_W <= w)                                  /* (the middle FB_W columns of it) */
-            for (int y = 0; y < ART_H; y++) memcpy(g_cockpit_wide + y * FB_W, art + y * w + (w - FB_W) / 2, sizeof(int16_t) * (size_t)FB_W);
-        else widen(art, w, g_cockpit_wide, FB_W, 120);
-    } else widen(g_cockpit, ART_W, g_cockpit_wide, FB_W, 120);
-    g_cockpit_wide_w = FB_W; g_cockpit_wide_loads = g_pkc_loads;
-}
-
-/* THE PAINTED COCKPIT ON THE CARD, at the screen's resolution: the picture sent once (the sides'
-   middle the game's own, from its numbers, for the card's smaller copies to blend into), and the
-   pixels it covers marked in the flat layer every picture -- what is drawn over them (needles,
-   radar, lamps) is the flat layer's again */
-#ifdef OS_GPU
-static void cockpit_send(void)
-{
-    const int aw = g_cockpit_art_w, ah = g_cockpit_art_h;
-    unsigned char *rgba = malloc((size_t)aw * (size_t)ah * 4);
-    if (!rgba) return;
-    const int mid0 = (ART_COLS - ART_W) / 2;
-    for (int y = 0; y < ah; y++)
-        for (int x = 0; x < aw; x++) {
-            const unsigned char *p = g_cockpit_art + 4 * ((size_t)y * aw + x);
-            unsigned char *q = rgba + 4 * ((size_t)y * aw + x);
-            const int fx = x * ART_COLS / aw - mid0, fy = y * ART_H / ah;
-            if (!g_cockpit_art_full && fx >= 0 && fx < ART_W) {
-                const int16_t n = g_cockpit[fy * ART_W + fx];
-                q[0] = (unsigned char)(g_pal[n & 255] >> 16); q[1] = (unsigned char)(g_pal[n & 255] >> 8); q[2] = (unsigned char)g_pal[n & 255];
-                q[3] = n >= 0 ? 255 : 0;
-            } else if (p[3] < 128 || (p[0] > 200 && p[1] < 60 && p[2] > 200)) q[0] = q[1] = q[2] = q[3] = 0;
-            else { q[0] = p[0]; q[1] = p[1]; q[2] = p[2]; q[3] = 255; }
-        }
-    gpu_cockpit(rgba, aw, ah);
-    free(rgba);
-    g_cockpit_sent = g_pkc_loads;
-}
-
-static void cockpit_mark(void)
-{
-    const int x0 = FB_W / 2 - ART_COLS / 2, m0 = (FB_W - ART_W) / 2;
-    for (int y = 0; y < ART_H; y++)
-        for (int x = x0 < 0 ? 0 : x0; x < x0 + ART_COLS && x < FB_W; x++) {
-            if (!g_cockpit_art_full && x >= m0 && x < m0 + ART_W) continue;
-            const int i = y * FB_W + x;
-            if (g_cockpit_wide[i] < 0) continue;
-            g_lay_op[i] = 2; g_lay_scene[i] = fb[i];
-        }
-    gpu_cockpit_at((float)x0, (float)ART_COLS);
-}
-#endif
 
 static void cockpit_draw(void)
 {
     if (!g_have_cockpit) return;
-    if (FB_W == ART_W && !(g_cockpit_art && g_cockpit_art_full)) { pkc_draw(g_cockpit); return; }
+    if (FB_W == ART_W) { pkc_draw(g_cockpit); return; }
     if (g_cockpit_wide_w != FB_W || g_cockpit_wide_loads != g_pkc_loads) cockpit_widen();
     const int ox = g_ox;
     g_ox = 0;
     pkc_draw_at(g_cockpit_wide, FB_W, 0);
     g_ox = ox;
-#ifdef OS_GPU
-    if (g_cockpit_art && g_lay_on) {
-        if (g_cockpit_sent != g_pkc_loads) cockpit_send();
-        cockpit_mark();
-    }
-#endif
 }
 
 static float wrap_pi(float a)
@@ -6426,20 +6279,10 @@ static void dash_line(int x0, int y0, int x1, int y1, uint8_t col)
     }
 }
 
-/* (hd: over a painted cockpit on the card, the card draws it at the screen's pixels) */
-static void dash_needle(int px, int py, int len, float angle, int colour, int hd)
+static void dash_needle(int px, int py, int len, float angle, int colour)
 {
     float a = angle - 2.0f;
     px *= LAY_S; py *= LAY_S; len *= LAY_S;
-#ifdef OS_GPU
-    if (hd && g_cockpit_art && g_lay_on) {
-        const float hx = (float)(px + g_ox) + 0.5f, hy = (float)py + 0.5f;
-        gpu_needle(hx, hy, hx + (float)len * sinf(a), hy - (float)len * cosf(a), 1.6f, 0.4f, g_pal[colour & 255]);
-        return;
-    }
-#else
-    (void)hd;
-#endif
     int tx = (int)((float)px + (float)len * sinf(a));
     int ty = (int)((float)py - (float)len * cosf(a));
     const uint8_t col = (uint8_t)colour;
@@ -7374,7 +7217,7 @@ static void s2_hud_draw(float dt)
         s2_text(0x10b, 0xb1, buf, 2, 5, 1);
         snprintf(buf, sizeof buf, "%d", h.gear);
         s2_text(299, 0xb1, buf, 2, 4, 2);
-        dash_needle(0x10f, 0xa8, 0x1e, g_s2_dial_revs * 3.1415927f, 0x5b, 0);
+        dash_needle(0x10f, 0xa8, 0x1e, g_s2_dial_revs * 3.1415927f, 0x5b);
         }
     }
     if (!h.finished && h.view != 1) {                    /* (0x45882: not over the trackside cameras) */
@@ -7570,8 +7413,8 @@ static void hud_draw(int instruments)
     if (instruments && g_views[g_view].cockpit) {
         cockpit_draw();
         if (g_have_dash) {
-            dash_needle(g_dash[2], g_dash[3], g_dash[0], g_needle_speed, 255, 1);
-            dash_needle(g_dash[5], g_dash[6], g_dash[0], g_needle_rpm, 255, 1);
+            dash_needle(g_dash[2], g_dash[3], g_dash[0], g_needle_speed, 255);
+            dash_needle(g_dash[5], g_dash[6], g_dash[0], g_needle_rpm, 255);
             int gear = g_pc.gear;
             if (gear >= 0 && gear <= 6)
                 /* the lamps' places ARE in the picture's own pixels (the H section's are doubled) */
@@ -7584,7 +7427,7 @@ static void hud_draw(int instruments)
         hud_text(0x10f, 0xbb, buf, 2, 7, 1);
         snprintf(buf, sizeof buf, "\001%d", g_pc.gear);
         hud_text(0x130, 0xbb, buf, 2, 1, 1);
-        dash_needle(0x10f, 0xa8, 0x1e, g_needle_rpm, 0x75, 0);
+        dash_needle(0x10f, 0xa8, 0x1e, g_needle_rpm, 0x75);
         LAY_MID();
     }
 
@@ -8927,7 +8770,7 @@ static void menu_frame(int screen, int pick, float turn, const uint8_t *bg, mesh
  */
 typedef struct { int line, works, *value, max; } menu_item;
 static int g_opt_detail = 2, g_opt_diff = 1, g_opt_laps = 0, g_opt_speech = 1, g_opt_music = 1;
-static int g_opt_res, g_opt_disp;               /* DISPLAY: RES, the n-th of g_res_list; 1 FULLSCREEN */
+static int g_opt_res, g_opt_disp, g_opt_aspect; /* DISPLAY: RES, the n-th of g_res_list; 1 FULLSCREEN; 1 ASPECT 4:3 */
 static int g_opt_filter, g_opt_msaa;            /* GRAPHICS: FILTERING 0 OFF 1 ON; MSAA 0 OFF, 1 2X, 2 4X, 3 8X */
 /* THE PORT'S OWN: with both games found and no -game, the menu starts on a page of two lines that
    chooses the game -- SCREAMER goes on to its intro and menu, SCREAMER 2 to its own (os_select_game);
@@ -8953,9 +8796,9 @@ static menu_item g_page_options[] = {            /* the difficulty's highest val
     { 8, 1, &g_opt_diff, 2 }, { 13, 1, &g_opt_laps, 3 }, { 21, 1, NULL, 0 },
 };
 /* THE PORT'S OWN: DISPLAY -- RES, the scene's rows on the card (steps up to the screen's own:
-   res_list_make), and the window or the whole screen; GRAPHICS -- the game's DETAIL and the card's
+   res_list_make), the window or the whole screen, and a race as wide as the window or 4:3; GRAPHICS -- the game's DETAIL and the card's
    FILTERING and MSAA; AUDIO -- the game's SPEECH and MUSIC.  The card's lines are not there without it */
-static menu_item g_page_display[] = { { 82, 1, &g_opt_res, 0 }, { 72, 1, &g_opt_disp, 1 } };
+static menu_item g_page_display[] = { { 82, 1, &g_opt_res, 0 }, { 72, 1, &g_opt_disp, 1 }, { 90, 1, &g_opt_aspect, 1 } };
 static menu_item g_page_graphics[] = {
     { 62, 1, &g_opt_detail, 3 },
 #ifdef OS_GPU
@@ -9618,6 +9461,8 @@ static int menu_run(int *track, int *car)
     strcpy(g_menu_text[79], "MSAA 8X");
     strcpy(g_menu_text[80], "DISPLAY");          /* (the port's pages: RES and WINDOW / FULLSCREEN; ... */
     strcpy(g_menu_text[81], "AUDIO");            /*  ... SPEECH and MUSIC; 82.. RES's steps, res_list_make) */
+    strcpy(g_menu_text[90], "ASPECT WIDE");
+    strcpy(g_menu_text[91], "ASPECT 4:3");
     car_spec specs[CAR_SPECS_MAX];
     int nspec = cars_dtr_load(specs, CAR_SPECS_MAX, "build/dec/GEN/CARS.DTR");
     if (g_nmenu_car > nspec) g_nmenu_car = nspec;
@@ -9681,6 +9526,7 @@ static int menu_run(int *track, int *car)
     int name_pos = 0, name_letter = g_save.name[0] - 'A', next_page = -1, next_screen = 0, rec_track = 0, rec_sel = 0;
     /* the options: as the settings file has them, or as the race just left hands them back */
     g_opt_disp = g_cfg.display;
+    g_opt_aspect = g_cfg.narrow;
     g_opt_detail = g_cfg.detail;
     g_opt_diff = g_cfg.diff; g_opt_laps = g_cfg.laps;
     if (getenv("OS_MENU_GOTO")) { page = atoi(getenv("OS_MENU_GOTO")); unsetenv("OS_MENU_GOTO"); }
@@ -9813,6 +9659,7 @@ static int menu_run(int *track, int *car)
             if (rows != g_res_rows) { g_res_rows = g_cfg.rows = rows; cfg_save(); }
         }
         if (!shotfile[0] && g_opt_disp != g_cfg.display) sys_fullscreen(g_opt_disp);
+        if (!shotfile[0] && g_opt_aspect != g_cfg.narrow) { g_cfg.narrow = g_opt_aspect; cfg_save(); }
 #ifdef OS_GPU
         if (!shotfile[0] && (g_opt_filter != g_cfg.filtering || (g_opt_msaa ? 1 << g_opt_msaa : 0) != g_cfg.msaa)) {
             g_cfg.filtering = g_opt_filter; g_cfg.msaa = g_opt_msaa ? 1 << g_opt_msaa : 0;
@@ -10014,7 +9861,7 @@ static int menu_run(int *track, int *car)
             const menu_item *items = page == 0 ? g_page_main : page == 1 ? g_page_options : page == PAGE_GRAPHICS ? g_page_graphics
                                    : page == PAGE_DISPLAY ? g_page_display + !card : page == PAGE_AUDIO ? g_page_audio
                                    : page == 2 ? g_page_special : page == 7 ? g_page_records : page == PAGE_GAME ? g_page_game : g_page_attack;
-            int n = page == 0 ? 5 : page == 1 ? OPT_LINES : page == PAGE_GRAPHICS ? 1 + 2 * card : page == PAGE_DISPLAY ? 1 + card
+            int n = page == 0 ? 5 : page == 1 ? OPT_LINES : page == PAGE_GRAPHICS ? 1 + 2 * card : page == PAGE_DISPLAY ? 2 + card
                   : page == PAGE_AUDIO ? 2 : page == 2 ? 3 : page == 7 ? 6 : 2;      /* 3 and 5: NEW / RESUME; the game's two */
             memcpy(g_pal, pal_main, sizeof g_pal);
             {
@@ -11527,7 +11374,8 @@ static void lerp_undo(int applied)
 }
 
 /* M4: how wide the race's picture is: the window's shape (OS_ASPECT=<w>:<h> or a number, a test,
-   over it); 4:3 or narrower, and Screamer 2, as ever.  The texture again when it changes */
+   over it); 4:3 or narrower, ASPECT 4:3 (aspect=4:3), and Screamer 2, as ever.  The texture again
+   when it changes */
 static SDL_Texture *pic_follow(SDL_Window *win, SDL_Texture *tex)
 {
     int dw = 0, dh = 0, w = ART_W;
@@ -11539,7 +11387,7 @@ static SDL_Texture *pic_follow(SDL_Window *win, SDL_Texture *tex)
     const char *f = getenv("OS_ASPECT");
     if (f) { double x = 0, y = 0; a = sscanf(f, "%lf:%lf", &x, &y) == 2 && y > 0 ? x / y : atof(f); }
     if (a > 32.0 / 9.0) a = 32.0 / 9.0;
-    if (os_game() == 1 && a > 4.0 / 3.0 + 0.02) w = ((int)(a * 480.0 + 0.5) + 1) & ~1;
+    if (os_game() == 1 && !g_cfg.narrow && a > 4.0 / 3.0 + 0.02) w = ((int)(a * 480.0 + 0.5) + 1) & ~1;
     if (w > FB_MAXW) w = FB_MAXW;
     if (w == FB_W) return tex;
     FB_W = w;
