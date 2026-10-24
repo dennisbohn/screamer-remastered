@@ -34,6 +34,7 @@
 #include "port.h"
 #include "s2_port.h"
 #include "controls.h"
+#include "third_party/stb_image.h"         /* (PNG: the painted cockpits; built in third_party/decoders.c) */
 #ifdef OS_GPU
 #include "gpu.h"
 #endif
@@ -5245,11 +5246,59 @@ static void pkc_draw_at(const int16_t *pic, int w, int split)
 
 static void pkc_draw(const int16_t *pic) { pkc_draw_at(pic, ART_W, 0); }
 
+static int16_t g_cockpit_wide[FB_MAXW * FB_MAXH];       /* the cockpit as wide as the picture (cockpit_widen) */
+static int g_cockpit_wide_w, g_cockpit_wide_loads = -1;
+
+/*
+ * PAINTED COCKPITS FOR A WIDER PICTURE (the port's own).  <home>/cockpits/ or <the program's
+ * folder>/cockpits/ may hold, for the cockpit COCKnnXH (nn the model, X the livery):
+ *   COCKnnXH_sides.png   its sides alone, the middle 1280 columns see-through: the player's own
+ *                        picture goes in the middle, these round it -- nothing of the game in them;
+ *   COCKnnXH_full.png    a whole cockpit of its own, the middle as well.
+ * 21:9, any size from 933 x 400 up (2240 x 960 is FLUX's, 4480 x 1920 for 2160 rows); see-through
+ * or magenta (#FF00FF) is the windscreen.  Its colours are put to the race's palette.
+ */
+#define ART_COLS 1120                           /* 21:9 at 400 rows, in the picture's columns */
+static unsigned char *g_cockpit_art;            /* RGBA */
+static int g_cockpit_art_full, g_cockpit_art_w, g_cockpit_art_h;
+
+static unsigned char *art_png(const char *name, int *w, int *h)
+{
+    const char *const where[2] = { os_home_dir(), os_program_dir() };
+    for (int i = 0; i < 2; i++) {
+        char path[1100];
+        snprintf(path, sizeof path, "%s/cockpits/%s", where[i], name);
+        FILE *f = fopen(path, "rb");
+        if (!f) continue;
+        fseek(f, 0, SEEK_END);
+        const long n = ftell(f);
+        fseek(f, 0, SEEK_SET);
+        unsigned char *b = n > 0 ? malloc((size_t)n) : NULL;
+        const int ok = b && fread(b, 1, (size_t)n, f) == (size_t)n;
+        fclose(f);
+        int c = 0;
+        unsigned char *px = ok ? stbi_load_from_memory(b, (int)n, w, h, &c, 4) : NULL;
+        free(b);
+        if (px) { printf("cockpit: %s (%d x %d)\n", path, *w, *h); return px; }
+    }
+    return NULL;
+}
+
 static void cockpit_load(int model, int livery)
 {
     char file[128];
     snprintf(file, sizeof file, "build/dec/GAME/COCK%02d%cL.PKC", model, livery ? 'B' : 'A');
     g_have_cockpit = pkc_load(file, g_cockpit);
+    if (g_cockpit_art) { stbi_image_free(g_cockpit_art); g_cockpit_art = NULL; }
+    g_cockpit_wide_w = 0;
+    for (int full = 1; full >= 0 && !g_cockpit_art; full--) {
+        char name[64];
+        int w = 0, h = 0;
+        snprintf(name, sizeof name, "COCK%02d%cH_%s.png", model, livery ? 'B' : 'A', full ? "full" : "sides");
+        unsigned char *px = art_png(name, &w, &h);
+        if (px && (h < ART_H || abs(w * 9 - h * 21) > h / 50)) { printf("cockpit: %s is %d x %d, not 21:9\n", name, w, h); stbi_image_free(px); px = NULL; }
+        if (px) { g_cockpit_art = px; g_cockpit_art_full = full; g_cockpit_art_w = w; g_cockpit_art_h = h; }
+    }
 }
 
 /*
@@ -5259,28 +5308,77 @@ static void cockpit_load(int model, int livery)
  * numbers cannot be mixed, so the nearest column.  Made from the player's own picture, whenever
  * the width changes.
  */
-static int16_t g_cockpit_wide[FB_MAXW * FB_MAXH];
-static int g_cockpit_wide_w, g_cockpit_wide_loads = -1;
-static void cockpit_widen(void)
+/* src, sw columns wide, drawn out to dst, dw wide: the middle's columns as they are, the outer
+   `edge` ones of either side stretched over what is left */
+static void widen(const int16_t *src, int sw, int16_t *dst, int dw, int edge)
 {
-    const int W = FB_W, keep = 200, half_old = ART_W / 2, half_new = W / 2;
+    const int keep = sw / 2 - edge, half_old = sw / 2, half_new = dw / 2;
     const double reach_old = half_old - keep, reach_new = half_new - keep;
     const double c = (reach_new - reach_old) / (reach_new * reach_new);
-    for (int x = 0; x < W; x++) {
+    for (int x = 0; x < dw; x++) {
         const double d = fabs(x + 0.5 - half_new);
         const double t = d - keep, od = d <= keep ? d : keep + t - c * t * t;
         int ox = (int)floor(half_old + (x + 0.5 >= half_new ? od : -od));
         if (ox < 0) ox = 0;
-        if (ox > ART_W - 1) ox = ART_W - 1;
-        for (int y = 0; y < ART_H; y++) g_cockpit_wide[y * W + x] = g_cockpit[y * ART_W + ox];
+        if (ox > sw - 1) ox = sw - 1;
+        for (int y = 0; y < ART_H; y++) dst[y * dw + x] = src[y * sw + ox];
     }
-    g_cockpit_wide_w = W; g_cockpit_wide_loads = g_pkc_loads;
+}
+
+/* the painted cockpit as the picture's numbers, ART_COLS columns: each a block of its pixels (2 x
+   2.4 at 2240 x 960) averaged, put to the palette's nearest (remembered by its 15 bits); the sides'
+   middle the game's own picture */
+static void cockpit_art_numbers(int16_t *out)
+{
+    static uint8_t near[32768];
+    static unsigned char known[32768];
+    memset(known, 0, sizeof known);
+    const int w = ART_COLS, mid0 = (w - ART_W) / 2, aw = g_cockpit_art_w, ah = g_cockpit_art_h;
+    for (int y = 0; y < ART_H; y++) {
+        const int r0 = y * ah / ART_H, r1 = (y + 1) * ah / ART_H;
+        for (int x = 0; x < w; x++) {
+            if (!g_cockpit_art_full && x >= mid0 && x < mid0 + ART_W) { out[y * w + x] = g_cockpit[y * ART_W + x - mid0]; continue; }
+            int sum[3] = { 0, 0, 0 }, n = 0, holes = 0;
+            for (int r = r0; r < r1; r++)
+                for (int c = x * aw / w; c < (x + 1) * aw / w; c++) {
+                    const unsigned char *p = g_cockpit_art + 4 * ((size_t)r * (size_t)aw + (size_t)c);
+                    if (p[3] < 128 || (p[0] > 200 && p[1] < 60 && p[2] > 200)) { holes++; continue; }
+                    sum[0] += p[0]; sum[1] += p[1]; sum[2] += p[2]; n++;
+                }
+            if (n <= holes) { out[y * w + x] = -1; continue; }
+            const int rr = sum[0] / n, gg = sum[1] / n, bb = sum[2] / n;
+            const int key = (rr >> 3) << 10 | (gg >> 3) << 5 | (bb >> 3);
+            if (!known[key]) {
+                long best = LONG_MAX; int at = 0;
+                for (int i = 1; i < 256; i++) {         /* (0 is the game's see-through elsewhere: not taken) */
+                    const long dr = (long)(g_pal[i] >> 16 & 255) - rr, dg = (long)(g_pal[i] >> 8 & 255) - gg, db = (long)(g_pal[i] & 255) - bb;
+                    const long d = dr * dr + dg * dg + db * db;
+                    if (d < best) { best = d; at = i; }
+                }
+                near[key] = (uint8_t)at; known[key] = 1;
+            }
+            out[y * w + x] = near[key];
+        }
+    }
+}
+
+static void cockpit_widen(void)
+{
+    if (g_cockpit_art) {
+        static int16_t art[ART_COLS * ART_H];
+        const int w = ART_COLS;
+        cockpit_art_numbers(art);
+        if (FB_W <= w)                                  /* (the middle FB_W columns of it) */
+            for (int y = 0; y < ART_H; y++) memcpy(g_cockpit_wide + y * FB_W, art + y * w + (w - FB_W) / 2, sizeof(int16_t) * (size_t)FB_W);
+        else widen(art, w, g_cockpit_wide, FB_W, 120);
+    } else widen(g_cockpit, ART_W, g_cockpit_wide, FB_W, 120);
+    g_cockpit_wide_w = FB_W; g_cockpit_wide_loads = g_pkc_loads;
 }
 
 static void cockpit_draw(void)
 {
     if (!g_have_cockpit) return;
-    if (FB_W == ART_W) { pkc_draw(g_cockpit); return; }
+    if (FB_W == ART_W && !(g_cockpit_art && g_cockpit_art_full)) { pkc_draw(g_cockpit); return; }
     if (g_cockpit_wide_w != FB_W || g_cockpit_wide_loads != g_pkc_loads) cockpit_widen();
     const int ox = g_ox;
     g_ox = 0;

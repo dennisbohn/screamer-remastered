@@ -7,7 +7,9 @@ resolution, 16:9, smooth motion, HD art. Removed (2026-10-24): the 320 x 200 mod
 L set; the picture is always 640 x 400, `LAY_S` = 2) and the MiSTer code with its tall and wide
 pictures. Screamer 2 runs as it is, at 640 x 400; the work is on Screamer 1 for now. A race is as
 wide as the window (16:9 = 854 x 400; `pic_follow`, the flat things at `g_ox`: LAY_LEFT / MID / RIGHT;
-the cockpit's sides drawn out, `cockpit_widen`; `OS_ASPECT=16:9` a test); menus stay 4:3. No pull
+the cockpit's sides drawn out, `cockpit_widen`; `OS_ASPECT=16:9` a test); menus stay 4:3. Painted
+cockpits: `<home or program>/cockpits/COCKnnXH_sides.png` (the sides only, the game's middle put in)
+or `_full.png`, 21:9 any size (stb_image), put to the palette; never commit any made from the game's. No pull
 requests to OpenScreamer. Dennis tests and decides; what follows still
 describes OpenScreamer's working agreement (Danik) where it has not been rewritten yet.
 
