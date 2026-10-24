@@ -49,14 +49,23 @@ static int poll_event(SDL_Event *e);
  * THE PICTURE: 640 x 400, the size of the game's high set of files (STARTH: every "H" picture is
  * 640 x 400, every "H" font and sprite twice its "L" twin), shown 4:3.  Everything flat keeps
  * the game's 320 x 200 places and is multiplied by LAY_S, as STARTH does.
+ * A RACE AS WIDE AS THE WINDOW (M4, the port's own): Screamer's races have as many columns as the
+ * window's shape asks for at 400 rows (480 a unit of width over height: 16:9 is 854), the lens as
+ * ever, so more is seen at the sides.  The flat things keep their 640 columns, put at the left,
+ * the middle or the right of the picture (g_ox, LAY_LEFT / LAY_MID / LAY_RIGHT); the menus and
+ * Screamer 2 stay 640 wide.  pic_follow sets it, every picture.
  */
-#define FB_MAXW 640
+#define FB_MAXW 1712               /* 32:9 */
 #define FB_MAXH 400
 static int FB_W = 640, FB_H = 400;
 #define LAY_S 2                    /* the game's 320 x 200 places to the picture's pixels */
 #define ART_W (320 * LAY_S)
 #define ART_H (200 * LAY_S)
 static int g_clip[4] = { 0, 640, 0, 400 };     /* where flat things may be drawn: x0, x1, y0, y1, in pixels */
+static int g_ox;                               /* where the 640 columns of the flat layout start in fb */
+#define LAY_LEFT()  (g_ox = 0)
+#define LAY_MID()   (g_ox = (FB_W - ART_W) / 2)
+#define LAY_RIGHT() (g_ox = FB_W - ART_W)
 
 /*
  * 320x200 is 1.6:1 but was always displayed at 4:3, so its pixels are 1.2x
@@ -385,8 +394,10 @@ static SDL_Window *sys_window(SDL_Renderer **ren)
 static SDL_Texture *sys_texture(int w, int h)
 {
 #ifdef OS_GPU
+    gpu_shape(w, h);
     if (gpu_active()) return (SDL_Texture *)os_slot(0); /* (a stand-in: the picture goes to the card, gpu_picture) */
 #endif
+    if (os_slot(1)) SDL_RenderSetLogicalSize(os_slot(1), w * 3 / 2, h * 9 / 5);   /* (640 x 400: 960 x 720) */
     SDL_Texture *tex = os_slot(2);
     int tw = 0, th = 0;
     if (tex) SDL_QueryTexture(tex, NULL, NULL, &tw, &th);
@@ -699,13 +710,15 @@ static void res_init(void)
 static float g_focal_x, g_focal_y;
 static SDL_Texture *g_s2m_tex;                       /* (... and its picture while it runs) */
 
-/* a whole-screen picture */
+/* a whole-screen picture: in the middle, black at the sides of a wider one */
 static void pic_put(const uint8_t *pic, int scene)
 {
+    const int x0 = (FB_W - ART_W) / 2;
     if (scene) for (int i = 0; i < FB_W * FB_H; i++) { zb[i] = 0.0f; idb[i] = -1; }
+    if (x0 > 0) memset(fb, pal_near(0), FB_BYTES);
     for (int y = 0; y < FB_H; y++) {
-        memcpy(fb + y * FB_W, pic + (size_t)y * ART_W, (size_t)FB_W);
-        LAY_RUN(fb + y * FB_W, FB_W);
+        memcpy(fb + y * FB_W + x0, pic + (size_t)y * ART_W, (size_t)ART_W);
+        LAY_RUN(fb + y * FB_W + x0, ART_W);
     }
 }
 
@@ -5190,42 +5203,47 @@ static int pkc_load(const char *file, int16_t *out)
 
 static int g_pkc_loads;                 /* goes up whenever the pictures are read again: what pkc_draw remembers is stale */
 
-static void pkc_draw(const int16_t *pic)
+/* a picture `w` wide at g_ox; split: its left half at the picture's left edge, its right half at
+   the right one (IMPLET's labels: LAP and the clocks left, POSITION right) */
+static void pkc_draw_at(const int16_t *pic, int w, int split)
 {
     /* where a picture has pixels at all is found once (most of it is
        see-through): runs of them, a row at a time, with where on the screen
-       each goes -- in a wide picture only the even rows have a place */
-    static struct { const int16_t *pic; int n, loads; int *run; } known[6];
+       each goes */
+    static struct { const int16_t *pic; int n, loads, w, fbw; int *run; } known[6];
     int k = 0;
-    uint8_t *const to = fb;
     while (k < 6 && known[k].pic && known[k].pic != pic) k++;
     if (k == 6) k = 0;
-    if (known[k].pic != pic || known[k].loads != g_pkc_loads) {
+    if (known[k].pic != pic || known[k].loads != g_pkc_loads || known[k].w != w || known[k].fbw != FB_W) {
         int n = 0;
+        if (known[k].pic != pic) { free(known[k].run); known[k].run = NULL; }
         for (int pass = 0; pass < 2; pass++) {
             n = 0;
             for (int y = 0; y < ART_H; y++)
-                for (int x = 0; x < ART_W; x++) {
-#define PKC_SHOWS(xx) (pic[y * ART_W + (xx)] >= 0)
+                for (int x = 0; x < w; x++) {
+#define PKC_SHOWS(xx) (pic[y * w + (xx)] >= 0 && ((xx) < w / 2) == (x < w / 2))
                     if (!PKC_SHOWS(x)) continue;
                     int x1 = x;
-                    while (x1 < ART_W && PKC_SHOWS(x1)) x1++;
-                    if (pass) { known[k].run[3 * n] = y * ART_W + x; known[k].run[3 * n + 1] = y * FB_W + x; known[k].run[3 * n + 2] = x1 - x; }
+                    while (x1 < w && PKC_SHOWS(x1)) x1++;
+                    if (pass) { known[k].run[3 * n] = y * w + x; known[k].run[3 * n + 1] = y * FB_W + x; known[k].run[3 * n + 2] = x1 - x; }
                     n++;
-                    x = x1;
+                    x = x1 - 1;
                 }
-            if (!pass) known[k].run = malloc(sizeof(int) * 3 * (size_t)(n + 1));
+            if (!pass) { free(known[k].run); known[k].run = malloc(sizeof(int) * 3 * (size_t)(n + 1)); }
         }
-        known[k].n = n; known[k].pic = pic; known[k].loads = g_pkc_loads;
+        known[k].n = n; known[k].pic = pic; known[k].loads = g_pkc_loads; known[k].w = w; known[k].fbw = FB_W;
     }
     for (int r = 0; r < known[k].n; r++) {
         const int16_t *from = pic + known[k].run[3 * r];
-        uint8_t *at = to + known[k].run[3 * r + 1];
+        const int ox = !split ? g_ox : known[k].run[3 * r] % w < w / 2 ? 0 : FB_W - w;
+        uint8_t *at = fb + known[k].run[3 * r + 1] + ox;
         const int len = known[k].run[3 * r + 2];
         for (int i = 0; i < len; i++) at[i] = (uint8_t)from[i];
         LAY_RUN(at, len);
     }
 }
+
+static void pkc_draw(const int16_t *pic) { pkc_draw_at(pic, ART_W, 0); }
 
 static void cockpit_load(int model, int livery)
 {
@@ -5234,10 +5252,40 @@ static void cockpit_load(int model, int livery)
     g_have_cockpit = pkc_load(file, g_cockpit);
 }
 
+/*
+ * THE COCKPIT IN A WIDER PICTURE: the middle -- the gauges, the lamps, the needles' places --
+ * as it is, and each side drawn out towards the edge, more and more (the old column for a new
+ * one: x - c x^2 past the middle's 200 columns either side, so the seam has no kink); a picture's
+ * numbers cannot be mixed, so the nearest column.  Made from the player's own picture, whenever
+ * the width changes.
+ */
+static int16_t g_cockpit_wide[FB_MAXW * FB_MAXH];
+static int g_cockpit_wide_w, g_cockpit_wide_loads = -1;
+static void cockpit_widen(void)
+{
+    const int W = FB_W, keep = 200, half_old = ART_W / 2, half_new = W / 2;
+    const double reach_old = half_old - keep, reach_new = half_new - keep;
+    const double c = (reach_new - reach_old) / (reach_new * reach_new);
+    for (int x = 0; x < W; x++) {
+        const double d = fabs(x + 0.5 - half_new);
+        const double t = d - keep, od = d <= keep ? d : keep + t - c * t * t;
+        int ox = (int)floor(half_old + (x + 0.5 >= half_new ? od : -od));
+        if (ox < 0) ox = 0;
+        if (ox > ART_W - 1) ox = ART_W - 1;
+        for (int y = 0; y < ART_H; y++) g_cockpit_wide[y * W + x] = g_cockpit[y * ART_W + ox];
+    }
+    g_cockpit_wide_w = W; g_cockpit_wide_loads = g_pkc_loads;
+}
+
 static void cockpit_draw(void)
 {
     if (!g_have_cockpit) return;
-    pkc_draw(g_cockpit);
+    if (FB_W == ART_W) { pkc_draw(g_cockpit); return; }
+    if (g_cockpit_wide_w != FB_W || g_cockpit_wide_loads != g_pkc_loads) cockpit_widen();
+    const int ox = g_ox;
+    g_ox = 0;
+    pkc_draw_at(g_cockpit_wide, FB_W, 0);
+    g_ox = ox;
 }
 
 static float wrap_pi(float a)
@@ -6225,6 +6273,7 @@ static void dash_line(int x0, int y0, int x1, int y1, uint8_t col)
     int dx = abs(x1 - x0), dy = abs(y1 - y0), n = dx > dy ? dx : dy;
     for (int i = 0; i <= n; i++) {
         int x = n ? x0 + (x1 - x0) * i / n : x0, y = n ? y0 + (y1 - y0) * i / n : y0;
+        x += g_ox;
         if (x >= 0 && y >= 0 && x < FB_W && y < FB_H) { fb[y * FB_W + x] = col; LAY_PUT(y * FB_W + x); }
     }
 }
@@ -6365,6 +6414,7 @@ static void hud_load(void)
 
 static void hud_put(int x, int y, int idx)
 {
+    x += g_ox;
     if (x < g_clip[0] || x >= g_clip[1] || y < g_clip[2] || y >= g_clip[3]) return;
     fb[y * FB_W + x] = (uint8_t)idx;
     LAY_PUT(y * FB_W + x);
@@ -6432,7 +6482,7 @@ static void hud_sprite_px(int x, int y, int n)
     if (n < 0 || n >= g_nspr) return;
     const hud_sprite *sp = &g_spr[n];
     /* (hud_put's sums and clipping, a row at a time) */
-    const int x0 = x + sp->ox;
+    const int x0 = x + sp->ox + g_ox;
     const int c0 = x0 < g_clip[0] ? g_clip[0] - x0 : 0, c1 = x0 + sp->w > g_clip[1] ? g_clip[1] - x0 : sp->w;
     if (c0 >= c1) return;
     for (int r = 0; r < sp->h; r++) {
@@ -6484,7 +6534,7 @@ static void hud_radar(void)
 {
     if (!g_radar_zoom) return;
     const car_state *c = &g_pc;
-    g_clip[0] = 4 * LAY_S; g_clip[1] = 0x4c * LAY_S; g_clip[2] = 0x7c * LAY_S; g_clip[3] = 0xc4 * LAY_S;
+    g_clip[0] = 4 * LAY_S + g_ox; g_clip[1] = 0x4c * LAY_S + g_ox; g_clip[2] = 0x7c * LAY_S; g_clip[3] = 0xc4 * LAY_S;
     /* every pixel of the window to the palette's nearest of three quarters of it: the game's
        table, built once a palette (0x25870) */
     const uint8_t *const dark = pal_darker(0.75f);
@@ -6715,8 +6765,10 @@ static void cd_draw(float dt)
         if (g_cd.fade <= 0.0f) { g_cd.fade = 0.0f; song_play(0); }
         volumes_apply(g_cd.fade);
     }
-    champ_darken(0, 0, 320, FB_H / LAY_S);
-    champ_darken(0, 0, 320, FB_H / LAY_S);
+    {   /* (the whole picture, however wide: twice the game's three quarters) */
+        const uint8_t *const dk = pal_darker(0.75f);
+        for (int i = 0; i < FB_W * FB_H; i++) { lay_dark(i, dk); lay_dark(i, dk); }
+    }
     if (g_have_cdfront) pkc_draw(g_cdfront);
     char buf[8];
     int blink = ((SDL_GetTicks() - born) / 320) & 1;
@@ -6731,7 +6783,7 @@ static void cd_draw(float dt)
         hud_text(0x40, 0x45, name[g_cd.chan], 5, 3, 1);
         for (int i = 0; i < *vol[g_cd.chan] / 1024; i++)
             for (int y = 0x45 * LAY_S; y <= 0x4a * LAY_S + LAY_S - 1; y++)
-                for (int x = (0x55 + i * 3) * LAY_S; x < (0x55 + i * 3) * LAY_S + LAY_S; x++)
+                for (int x = (0x55 + i * 3) * LAY_S + g_ox; x < (0x55 + i * 3) * LAY_S + LAY_S + g_ox; x++)
                     if (x < FB_W && y < FB_H) { fb[y * FB_W + x] = (uint8_t)bar_colour[(i / 10) & 3]; LAY_PUT(y * FB_W + x); }
     }
 }
@@ -7353,9 +7405,10 @@ static void hud_draw(int instruments)
 {
     char buf[64];
     if (g_replay) instruments = 0;
-    /* (a taller picture: the labels and what goes with them at the top, the
-       instruments and the radar at the bottom, the end's words in the middle) */
-    if (g_have_implet) pkc_draw(g_implet);
+    /* (a wider picture: LAP, the clocks and the radar at the left, POSITION and the instruments
+       at the right, the cockpit, the countdown, the lights and the end's words in the middle) */
+    if (g_have_implet) pkc_draw_at(g_implet, ART_W, 1);
+    LAY_MID();
     if (instruments && g_views[g_view].cockpit) {
         cockpit_draw();
         if (g_have_dash) {
@@ -7367,23 +7420,28 @@ static void hud_draw(int instruments)
                 hud_sprite_px(g_dash[8 + gear * 3], g_dash[9 + gear * 3], g_dash[1] + gear);
         }
     } else if (instruments) {
+        LAY_RIGHT();
         if (g_have_impres) pkc_draw(g_impres);
         snprintf(buf, sizeof buf, "\001%03d", (int)(g_pc.speed * 0.017f));
         hud_text(0x10f, 0xbb, buf, 2, 7, 1);
         snprintf(buf, sizeof buf, "\001%d", g_pc.gear);
         hud_text(0x130, 0xbb, buf, 2, 1, 1);
         dash_needle(0x10f, 0xa8, 0x1e, g_needle_rpm, 0x75);
+        LAY_MID();
     }
 
     snprintf(buf, sizeof buf, "%d", (int)(g_timer));
     hud_text_centred(8, buf, 6, 2);
+    LAY_LEFT();
     int lap = g_laps < g_total_laps ? g_laps + 1 : g_laps;
     snprintf(buf, sizeof buf, "%d:", lap);
     int w = hud_text(8, 0xb, buf, 1, 5, 1);
     snprintf(buf, sizeof buf, "%d", g_total_laps);
     hud_text(w + 5, 0x14, buf, 4, 5, 1);
+    LAY_RIGHT();
     snprintf(buf, sizeof buf, "%d", g_player_rank);
     hud_text(0x114, 0xb, buf, 1, 5, 1);
+    LAY_LEFT();
     if (g_replay) {
         if (((int)(g_race_clock * 30.0f)) & 0x80 || ((int)(g_race_clock * 2.0f) & 1))
             { hud_text(8, 0xaa, "R", 0, 6, 1); }
@@ -7396,6 +7454,7 @@ static void hud_draw(int instruments)
         hud_text(8, 0x58, buf, 3, 2, 1);
         hud_radar();
     }
+    LAY_MID();
 
     if (g_race_clock < 8.0f) hud_sprite_draw(0x78, 0x36, (int)(g_race_clock) / 2);
 
@@ -8947,7 +9006,7 @@ static int champ_enter(void)
 
 static void champ_darken(int x0, int y0, int w, int h)           /* 0x25cc8: to 75% */
 {
-    x0 *= LAY_S; y0 = y0 * LAY_S; w *= LAY_S; h *= LAY_S;
+    x0 = x0 * LAY_S + g_ox; y0 = y0 * LAY_S; w *= LAY_S; h *= LAY_S;
     for (int y = y0; y < y0 + h && y < FB_H; y++)
         for (int x = x0; x < x0 + w && x < FB_W; x++) {
             lay_dark(y * FB_W + x, pal_darker(0.75f));
@@ -11309,6 +11368,28 @@ static void lerp_undo(int applied)
     if (applied) lerp_put(&g_lerp_now);
 }
 
+/* M4: how wide the race's picture is: the window's shape (OS_ASPECT=<w>:<h> or a number, a test,
+   over it); 4:3 or narrower, and Screamer 2, as ever.  The texture again when it changes */
+static SDL_Texture *pic_follow(SDL_Window *win, SDL_Texture *tex)
+{
+    int dw = 0, dh = 0, w = ART_W;
+#ifdef OS_GPU
+    if (gpu_active()) SDL_GL_GetDrawableSize(win, &dw, &dh); else
+#endif
+    if (!os_slot(1) || SDL_GetRendererOutputSize(os_slot(1), &dw, &dh) != 0) SDL_GetWindowSize(win, &dw, &dh);
+    double a = dh > 0 ? (double)dw / dh : 4.0 / 3.0;
+    const char *f = getenv("OS_ASPECT");
+    if (f) { double x = 0, y = 0; a = sscanf(f, "%lf:%lf", &x, &y) == 2 && y > 0 ? x / y : atof(f); }
+    if (a > 32.0 / 9.0) a = 32.0 / 9.0;
+    if (os_game() == 1 && a > 4.0 / 3.0 + 0.02) w = ((int)(a * 480.0 + 0.5) + 1) & ~1;
+    if (w > FB_MAXW) w = FB_MAXW;
+    if (w == FB_W) return tex;
+    FB_W = w;
+    g_clip[0] = 0; g_clip[1] = FB_W; g_clip[2] = 0; g_clip[3] = FB_H;
+    LAY_MID();
+    return sys_texture(FB_W, FB_H);
+}
+
 static int session(int argc, char **argv)
 {
     g_argv = argv; g_argc = argc;
@@ -11991,7 +12072,6 @@ static int session(int argc, char **argv)
     SDL_Window *win = sys_window(&ren);
     if (!win || !ren) return 1;
     SDL_Texture *tex = sys_texture(FB_W, FB_H);
-    (void)tex;
 
     if (os_once(3))
         printf("\nCONTROLS\n"
@@ -12057,6 +12137,7 @@ static int session(int argc, char **argv)
     Uint64 last = SDL_GetPerformanceCounter();
     const double tick = 1.0 / (double)SDL_GetPerformanceFrequency();
     while (running) {
+        tex = pic_follow(win, tex);
         /* (the frame's time from the fine clock: in whole milliseconds a 180 Hz screen's
            frames are 5 and 6 by turns) */
         const Uint64 frame_began = SDL_GetPerformanceCounter();

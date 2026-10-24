@@ -23,7 +23,7 @@ The software renderer is the fall-back, nothing to choose in the menus:
 | M2 | the 3D scene on the GPU at the original resolution: `tri_job` list, materials 16/64/128/160/224, depth rules; A/B tool against the software renderer | done |
 | M3 | the scene at the window's size (RES NATIVE, up to 4K), the menu's 3D too; GRAPHICS page (RES, DISPLAY, DETAIL) | done |
 | M3 | FILTERING (a true-colour scene, its textures filtered) and MSAA 2X / 4X / 8X, both on the GRAPHICS page, off by default | done |
-| M4 | 16:9 and wider | later |
+| M4 | 16:9 and wider: Screamer's races as wide as the window, the flat things at its edges, the cockpit drawn out (main.c `pic_follow`, `g_ox`) | done |
 | M5 | draw distance (far plane, keep range, animations started as far as is drawn) | put back: ULTRA is enough for now |
 | M6 | interpolation between the 50 Hz physics steps | later |
 

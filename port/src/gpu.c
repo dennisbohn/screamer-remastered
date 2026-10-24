@@ -1364,12 +1364,18 @@ static void scene_targets_lo(int w, int h)
     G->lo_w = w; G->lo_h = h;
 }
 
+static int g_shape_w = 640, g_shape_h = 400;
+void gpu_shape(int w, int h) { if (w > 0 && h > 0) { g_shape_w = w; g_shape_h = h; } }
+
+/* the window's part the picture fills: as large as it fits, in the middle (640 x 400 is 4:3: fb's
+   pixels are 6:5, taller than wide, as 320 x 200 always was) */
 void gpu_area(int *w, int *h)
 {
     int dw = 0, dh = 0;
     if (gpu()) SDL_GL_GetDrawableSize(G->win, &dw, &dh);
-    if ((double)dw * 3.0 > (double)dh * 4.0) dw = (int)((double)dh * 4.0 / 3.0 + 0.5);
-    else dh = (int)((double)dw * 3.0 / 4.0 + 0.5);
+    const double a = (double)g_shape_w * 5.0 / ((double)g_shape_h * 6.0);
+    if ((double)dw > (double)dh * a) dw = (int)((double)dh * a + 0.5);
+    else dh = (int)((double)dw / a + 0.5);
     *w = dw; *h = dh;
 }
 
