@@ -9563,6 +9563,26 @@ static void ms_logos(float dt)
     hud_sprite_draw((int)g_ms_logo[1], 0x10, 14);
 }
 
+/*
+ * THE MENU IN ANOTHER SIZE, GOING ON (RES to or from VGA: the other set of pictures, fonts and
+ * sprites, so the menu starts again as a part of its own).  What is seen is kept over it in
+ * os_slot 12 -- the camera, the letters' swing, the logos, the line chosen, where the song is --
+ * and the new menu takes it up as it was: no fade from black, no letters flying in.
+ */
+typedef struct {
+    int    on, sel, song, cd_track;
+    long   cd_at;
+    ms_cam cam;
+    float  logo[2], wave;
+} menu_keep;
+
+static menu_keep *menu_kept(void)
+{
+    menu_keep *k = os_slot(12);
+    if (!k && (k = os_keep_calloc(1, sizeof *k)) != NULL) os_slot_set(12, k);
+    return k;
+}
+
 /* entering a screen: its camera, as the game's set-up routines leave it */
 static void ms_enter(int scr, int pick_car, int pick_track, int letter)
 {
@@ -9772,6 +9792,8 @@ static int menu_run(int *track, int *car)
 #endif
     g_opt_diff = g_cfg.diff; g_opt_laps = g_cfg.laps;
     if (getenv("OS_MENU_GOTO")) { page = atoi(getenv("OS_MENU_GOTO")); unsetenv("OS_MENU_GOTO"); }
+    menu_keep *const kept = os_slot(12) && ((menu_keep *)os_slot(12))->on ? os_slot(12) : NULL;
+    if (kept) { kept->on = 0; if (page >= 0 && page <= PAGE_GRAPHICS) sel[page] = kept->sel; }
     if (getenv("OS_DIFF")) { g_opt_diff = atoi(getenv("OS_DIFF")); if (g_opt_diff > 3) g_opt_diff = 3; }
     if (getenv("OS_LAPS")) {
         int l = atoi(getenv("OS_LAPS"));
@@ -9850,6 +9872,10 @@ static int menu_run(int *track, int *car)
         if (!shotfile[0] && music_on != g_opt_music) {
             music_on = g_opt_music;
             song_play(music_on ? song_for(1) : 0);
+            if (kept && kept->song && music_on && kept->cd_track && snd_cd_track() == kept->cd_track) {
+                snd_cd_skip(kept->cd_at);
+                if (getenv("OS_MUSICLOG")) printf("music: the song goes on at %.1f s\n", (double)kept->cd_at / 44100.0);
+            }
             volumes_apply(1.0f);
         }
         tick++;
@@ -9937,6 +9963,12 @@ static int menu_run(int *track, int *car)
             unsetenv("OS_MENU_KEYS");
             setenv("OS_MENU_GOTO", page == PAGE_GRAPHICS ? "10" : "1", 1);
             setenv("OS_INTRO_DONE", "1", 1);
+            menu_keep *k = menu_kept();
+            if (k && scr_shown == 0) {           /* (what is seen goes on in the new size) */
+                k->on = 1; k->sel = sel[page]; k->cam = g_mc; k->wave = g_ms_wave;
+                k->logo[0] = g_ms_logo[0]; k->logo[1] = g_ms_logo[1];
+                k->song = music_on; k->cd_track = snd_cd_track(); k->cd_at = snd_cd_at();
+            }
             snd_close();
             os_go(1, NULL, NULL);                /* the menu again, in the new size */
         }
@@ -10021,6 +10053,11 @@ static int menu_run(int *track, int *car)
             fade_in = want == 0 ? 0.6f : 1.5f;
             ms_enter(want, pick[1], pick[0], name_letter);
             page_sig[0] = 0;
+            if (kept && want == 0) {
+                g_mc = kept->cam; g_ms_wave = kept->wave;
+                g_ms_logo[0] = kept->logo[0]; g_ms_logo[1] = kept->logo[1];
+                fade = 1.0f;
+            }
         }
         if (fade < 1.0f) { fade += dt * fade_in; if (fade > 1.0f) fade = 1.0f; }
         if (page == -2 || page == 8) {           /* the name (screen 4), a track's records (screen 6) */
@@ -10143,7 +10180,8 @@ static int menu_run(int *track, int *car)
                 }
                 if (strcmp(sig, page_sig)) {
                     if (g_ms_shown == -1 || shotfile[0]) {
-                        ms_page_build(items, n, sel[page], 1);
+                        ms_page_build(items, n, sel[page], !kept);
+                        for (int i = 0; kept && i < MS_LETTERS; i++) if (g_ml[i].used && !g_ml[i].unsel) g_ml[i].a4 = 0.0f;
                         g_ms_shown = page; g_ms_leaving = 0; strcpy(page_sig, sig);
                     } else g_ms_leaving = 1;
                 }

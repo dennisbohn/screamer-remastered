@@ -35,6 +35,7 @@ static struct {
     FILE *img;                      /* CD_IMAGE: the sectors, the track's bytes, where it is */
     long img_start, img_end, img_at;
     int img_motorola;               /* (the cue's MOTOROLA: high byte first) */
+    long done;                      /* the song's frames played since its start (cd_audio_at) */
     stb_vorbis *ogg;
     drmp3 mp3;
     drwav wav;
@@ -216,6 +217,24 @@ int cd_audio_play(int track, int loop, int out_rate)
 }
 
 int cd_audio_track(void) { return g_cd.kind ? g_cd.track : 0; }
+
+/* where the song is, in its frames from the start; and on from there (the menu started again
+   in another size goes on with its song) */
+long cd_audio_at(void) { return g_cd.kind ? g_cd.done : 0; }
+void cd_audio_skip(long frames)
+{
+    if (!g_cd.kind || frames <= 0) return;
+    int ok = 1;
+    if (g_cd.kind == CD_IMAGE) {
+        const long at = g_cd.img_start + frames * 4;
+        ok = at < g_cd.img_end && fseek(g_cd.img, at, SEEK_SET) == 0;
+        if (ok) g_cd.img_at = at;
+    }
+    if (g_cd.kind == CD_OGG) ok = stb_vorbis_seek(g_cd.ogg, (unsigned)frames);
+    if (g_cd.kind == CD_MP3) ok = drmp3_seek_to_pcm_frame(&g_cd.mp3, (drmp3_uint64)frames);
+    if (g_cd.kind == CD_WAV) ok = drwav_seek_to_pcm_frame(&g_cd.wav, (drwav_uint64)frames);
+    if (ok) { g_cd.done = frames; g_cd.have = g_cd.at = 0; g_cd.frac = 0.0f; }
+}
 void cd_audio_pause(int on) { g_cd.paused = on != 0; }
 int cd_audio_paused(void) { return g_cd.kind && g_cd.paused; }
 void cd_audio_volume(float v) { g_cd_volume = v < 0.0f ? 0.0f : v > 2.0f ? 2.0f : v; }
@@ -261,6 +280,7 @@ static int cd_decode(void)
         if (g_cd.kind == CD_MP3) drmp3_seek_to_pcm_frame(&g_cd.mp3, 0);
         if (g_cd.kind == CD_WAV) drwav_seek_to_pcm_frame(&g_cd.wav, 0);
         if (g_cd.kind == CD_IMAGE) { g_cd.img_at = g_cd.img_start; if (fseek(g_cd.img, g_cd.img_start, SEEK_SET) != 0) return 0; }
+        g_cd.done = 0;
     }
     return 0;
 }
@@ -278,7 +298,7 @@ void cd_audio_frame(float *left, float *right, float gain)
         r += (float)g_cd.buf[2 * g_cd.at + 1] * part;
         need -= part;
         g_cd.frac += part;
-        if (g_cd.frac >= 0.9999f) { g_cd.frac = 0.0f; g_cd.at++; }
+        if (g_cd.frac >= 0.9999f) { g_cd.frac = 0.0f; g_cd.at++; g_cd.done++; }
     }
     const float k = gain * g_cd_volume / g_cd.step;
     *left += l * k;

@@ -343,6 +343,8 @@ int snd_cd(int track, int loop)
     return ok;
 }
 int snd_cd_track(void) { lock(); const int t = cd_audio_track(); unlock(); return t; }
+long snd_cd_at(void) { lock(); const long t = cd_audio_at(); unlock(); return t; }
+void snd_cd_skip(long frames) { lock(); cd_audio_skip(frames); unlock(); }
 void snd_cd_volume(float v) { lock(); cd_audio_volume(v); unlock(); }
 void snd_cd_pause(int on) { lock(); cd_audio_pause(on); unlock(); }
 int snd_cd_paused(void) { lock(); const int p = cd_audio_paused(); unlock(); return p; }
