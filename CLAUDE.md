@@ -23,6 +23,8 @@ What changed from OpenScreamer (2026-10-23..24; the details in `docs/GPU.md` and
   `LAY_RUN` -- a new routine that writes into fb must mark its pixels, or the card's scene covers
   them); MSAA shaded once a pixel, keyed edges by alpha to coverage.
 - No DETAIL option: always ULTRA with the H set (`OS_DETAIL` for tests).
+- The opponents' drawn tilt eases to the slope's (`opp_tilt_shown`, 0.08 s; the game's jumps from
+  face to face).
 - One program on Windows, no SDL2.dll: a trimmed SDL linked in (`port/sdl_lean.cmake`, 1.8 MB
   in all); the state restore takes only the statics between `os_begin.c` and `os_end.c`.
 - The picture between two 50 Hz steps (`lerp_apply`), OPTIONS as DISPLAY / GRAPHICS / AUDIO, the CD

@@ -5593,6 +5593,7 @@ typedef struct {
     float vy, up, tip, turn, lean, tip_rate, turn_rate, lean_rate, prev_speed;
     float prev_yaw, body;   /* for the lean in bends (0x1df24) */
     float x, y, z, yaw, pitch, roll;
+    float shown[2]; int shown_on;        /* the pitch and roll it is drawn with (opp_tilt_shown) */
     int   mark_at;          /* marker last reached (+0x320): PACE, and how far it has got */
     int   mk_count, mk_laps;             /* markers passed this lap (+0x324), laps done (+0x40c) */
     unsigned char mk_seen[MARKERS_MAX];  /* +0x328 */
@@ -5696,6 +5697,20 @@ static void opp_curve(const float A[2], const float B[2], const float C[2], floa
     }
 }
 
+/* the port's own: the drawn tilt eases to the slope's in about a tenth of a second -- the game's
+   jumps from one face's slope to the next; a change of more than 30 degrees is taken at once */
+#define TILT_EASE 0.08f
+static void opp_tilt_shown(opponent *o)
+{
+    const float d0 = o->pitch - o->shown[0], d1 = o->roll - o->shown[1];
+    if (!o->shown_on || fabsf(d0) > 0.5f || fabsf(d1) > 0.5f) {
+        o->shown[0] = o->pitch; o->shown[1] = o->roll; o->shown_on = 1;
+        return;
+    }
+    const float k = 1.0f - expf(-DRIVE_DT / TILT_EASE);
+    o->shown[0] += d0 * k; o->shown[1] += d1 * k;
+}
+
 static void opp_place(opponent *o, int k)
 {
     const gspline *sp = &g_opp_spl[k];
@@ -5792,8 +5807,9 @@ static void opp_place(opponent *o, int k)
         }
         o->obj->x = o->x; o->obj->y = o->y; o->obj->z = o->z + (o->crash == 1 ? o->up : 0.0f);
         o->obj->yaw = o->yaw + o->spin + (o->crash ? o->turn : 0.0f);   /* nose is local -Z: see player_sync */
-        o->obj->pitch = -o->pitch + (o->crash == 1 ? o->tip : 0.0f);
-        o->obj->roll = -o->roll + (o->crash == 1 ? o->lean : 0.0f);
+        opp_tilt_shown(o);
+        o->obj->pitch = -o->shown[0] + (o->crash == 1 ? o->tip : 0.0f);
+        o->obj->roll = -o->shown[1] + (o->crash == 1 ? o->lean : 0.0f);
         o->obj->phase = g_opp_livery[k] | 0x4000 | (o->speed <= 4000.0f ? 0x2000 : 0);
         {
             int kind = g_nmark ? g_mark[((o->mark_at % g_nmark) + g_nmark) % g_nmark].kind : 0;
