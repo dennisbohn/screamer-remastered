@@ -1,44 +1,57 @@
 # Screamer Remastered (built on OpenScreamer)
 
 **This repository is `github.com/dennisbohn/screamer-remastered`** (since 2026-10-24): Dennis
-Bohn's remaster, its own project, built on Danik's OpenScreamer (`upstream` =
-`github.com/ItsDanik/openscreamer`, whose history is kept here). Goals: graphics card, any
-resolution, 16:9, smooth motion, HD art. Removed (2026-10-24): the 320 x 200 mode (STARTL's
-L set; the picture is always 640 x 400, `LAY_S` = 2) and the MiSTer code with its tall and wide
-pictures. Screamer 2 runs as it is, at 640 x 400; the work is on Screamer 1 for now. A race is as
-wide as the window (16:9 = 854 x 400; `pic_follow`, the flat things at `g_ox`: LAY_LEFT / MID / RIGHT;
-the cockpit's sides drawn out, `cockpit_widen`; `OS_ASPECT=16:9` a test); menus stay 4:3. Painted
-cockpits: `<home or program>/cockpits/COCKnnXH_sides.png` (the sides only, the game's middle put in)
-or `_full.png`, 21:9 any size (stb_image), put to the palette; never commit any made from the game's. No pull
-requests to OpenScreamer. Dennis tests and decides; what follows still
-describes OpenScreamer's working agreement (Danik) where it has not been rewritten yet.
+Bohn's remaster of *Screamer*, its own project, built on Danik's OpenScreamer (`upstream` =
+`github.com/ItsDanik/openscreamer`, push disabled; its history is kept here). Goals: graphics
+card, any resolution, wide screens, smooth motion, HD art. **No pull requests, issues or comments
+to OpenScreamer**; its fixes are looked at and taken over by hand where they fit.
 
-# OpenScreamer — porting *Screamer* (1995, MS-DOS) to Linux, Windows and the MiSTer
+What changed from OpenScreamer (2026-10-23..24; the details in `docs/GPU.md` and below):
+- The graphics card's renderer (`port/src/gpu.c`, `docs/GPU.md`): the scene at the window's
+  resolution, FILTERING, MSAA; the software renderer is the fall-back.
+- Removed: the 320 x 200 mode (STARTL's L set; the picture is always 640 x 400, `LAY_S` = 2) and
+  the MiSTer code with its tall and wide pictures. Screamer 2 runs as it is, at 640 x 400; the
+  work is on Screamer 1 for now.
+- A race is as wide as the window (16:9 = 854 x 400; `pic_follow`, the flat things at `g_ox`:
+  LAY_LEFT / MID / RIGHT; `OS_ASPECT=16:9` a test); menus stay 4:3. The cockpit's sides are drawn
+  out (`cockpit_widen`), or painted ones are loaded: `<home or program>/cockpits/COCKnnXH_sides.png`
+  (the sides only, the game's middle put in) or `_full.png`, 21:9 any size (stb_image); on the card
+  shown at the screen's resolution (flat layer code 128 +: `cockpit_mark`, `gpu_cockpit`; the
+  needles `gpu_needle`), else put to the palette.
+- The picture between two 50 Hz steps (`lerp_apply`), OPTIONS as DISPLAY / GRAPHICS / AUDIO, the CD
+  music from GOG's disc image, the program's own name and home (`screamer-remastered`, the old
+  OpenScreamer home taken over once).
 
-Reverse-engineering + reimplementation. A native SDL2 port (Linux x86/ARM, Windows), and
-a MiSTer hybrid core (game on the ARM, FPGA for 15 kHz video / audio / input / FM chip).
+## Working agreement — read this first
+
+**Dennis does not write code.** He tests on his PC (Windows 11, RX 9070 XT, 120 Hz WQHD and a 4K
+TV), judges how it looks and feels, and decides scope and what is published. Do not hand him
+code to review or compiler errors to triage.
+
+- **Claude:** all code, tooling, builds, debugging, the docs. This machine: Windows 11, MSYS2
+  (ucrt64 gcc + SDL2, mingw32's cmake / objdump), python 3; no Ghidra. Build:
+  `export PATH=/c/msys64/ucrt64/bin:$PATH; /c/msys64/mingw32/bin/cmake.exe --build port/build -j 16`.
+  The `Read` tool opens PNGs: *look at rendered output yourself*; check every change with
+  pictures before handing over (the high-resolution pictures of a change that should not alter
+  them must be byte for byte the same).
+- **Dennis:** whether it looks / feels right (the original runs in DOSBox: GOG's
+  `C:\GOG Games\Screamer`), scope, licence and publishing decisions.
+- **Never publish or commit the games' files or anything made from them** -- the cockpits'
+  exports, painted or AI-made pictures, the CD's audio. Keep them outside the repository.
+
+Prefer "here is a build and a screenshot" over "please check this function". Plain language.
+
+The rest of this file is OpenScreamer's summary as it was (Danik's working agreement and the
+MiSTer are history now); its record of the game is still right.
+
+# OpenScreamer — porting *Screamer* (1995, MS-DOS)
+
+Reverse-engineering + reimplementation, written by reading the original programs.
 
 **This file is the summary. `docs/NOTES.md` is the full record** (this file as it stood
 on 2026-10-12, before compaction): every address, proof, measurement and dead end, in
 sections numbered 1–32. **Before working on an area, read its section there** (the index
 below gives the numbers). New findings: detail into `docs/NOTES.md`, one line here.
-
----
-
-## Working agreement — read this first
-
-**Danik does not write code or decompile.** He is the domain expert on the MiSTer and on
-these ports, and he does verification and game-feel judgement. Do not hand him code to
-review, patches to apply, or compiler errors to triage.
-
-- **Claude:** all code, tooling, decompilation, builds, debugging. This machine has
-  Ghidra 12.1.2 (`/opt/ghidra`), python3, wine, objdump. The `Read` tool opens PNGs:
-  *look at rendered output yourself*; verify every change with `--shot` before handing over.
-- **Danik:** real hardware, whether it looks / feels like the original (his original runs
-  in DOSBox, not on this machine), scope / licence / target decisions.
-
-Prefer "here is a build and a screenshot" over "please check this function". Keep
-everything buildable with one command. Plain language, not jargon.
 
 ---
 
@@ -54,8 +67,8 @@ music driver; the port does not use them). In older notes `DATA/…` means `scre
   `build/dec/<CONTAINER>/<FILE>` and `os_fopen` answers out of the `.DAT` (LZW in C,
   `fopencookie` stream; a temp file on Windows). **Trap:** `fmemopen(NULL,n,"w+")` gave
   subtly different pictures — do not go back to it. `OS_PACKDUMP=<dir>` dumps what is read.
-- **Start-up check** (`game_check`): 16 DATA + 9 low-res GFX containers needed, six
-  `MAPnH` optional; every file must unpack to its listed size; else exit 1.
+- **Start-up check** (`game_check`): 16 DATA + 15 GFX containers needed (the six `MAPnL` and
+  six `MAPnH` among them); every file must unpack to its listed size; else exit 1.
 - `build/dec/` (unpacked files, for the Python tools) is made by `tools/extract.sh`.
 
 **Legal: the game is still sold (GOG, Steam). Never publish `screamer/` or anything made

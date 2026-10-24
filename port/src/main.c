@@ -450,7 +450,8 @@ static int g_lay_want, g_lay_on, g_lay_flip, g_lay_n;
 static uint8_t g_lay_scene[FB_MAXW * FB_MAXH], g_lay_dk[FB_MAXW * FB_MAXH];
 /* a flat thing has drawn the pixel (LAY_PUT, LAY_RUN in the routines that put pixels down): its
    own colour, whatever the scene's is -- without it a logo in white over the white of a banner
-   was taken for the scene there, and the card's banner showed through */
+   was taken for the scene there, and the card's banner showed through.  2: the painted cockpit's
+   (cockpit_mark), shown at the screen's resolution and darkened as the scene is */
 static uint8_t g_lay_op[FB_MAXW * FB_MAXH];
 #define LAY_PUT(i)    (g_lay_on ? (void)(g_lay_op[(i)] = 1) : (void)0)
 #define LAY_RUN(p, n) (g_lay_on ? (void)memset(g_lay_op + ((p) - fb), 1, (size_t)(n)) : (void)0)
@@ -483,7 +484,7 @@ static inline void lay_dark(int i, const uint8_t *t)
 {
     if (g_lay_on) {
         const int k = g_lay_dk[i];
-        if (k != 255 && !g_lay_op[i] && fb[i] == (k ? g_lay_lut[k - 1][g_lay_scene[i]] : g_lay_scene[i]))
+        if (k != 255 && g_lay_op[i] != 1 && fb[i] == (k ? g_lay_lut[k - 1][g_lay_scene[i]] : g_lay_scene[i]))
             g_lay_dk[i] = (uint8_t)lay_then(k, t);
     }
     fb[i] = t[fb[i]];
@@ -496,7 +497,8 @@ static void lay_end(void)
     static uint8_t layer[FB_MAXW * FB_MAXH];
     for (int i = 0; i < FB_W * FB_H; i++) {          /* (and where fb no longer shows the scene: a flat thing not marked) */
         const int k = g_lay_dk[i];
-        layer[i] = (uint8_t)(g_lay_op[i] || k == 255 || fb[i] != (k ? g_lay_lut[k - 1][g_lay_scene[i]] : g_lay_scene[i]) ? 1 : k ? 1 + k : 0);
+        layer[i] = (uint8_t)(g_lay_op[i] == 1 || k == 255 || fb[i] != (k ? g_lay_lut[k - 1][g_lay_scene[i]] : g_lay_scene[i]) ? 1
+                             : (g_lay_op[i] == 2 ? 128 : 0) + (k ? 1 + k : 0));
     }
     gpu_overlay(layer, &g_lay_lut[0][0], g_lay_n, g_lay_flip);
 }
@@ -5247,7 +5249,7 @@ static void pkc_draw_at(const int16_t *pic, int w, int split)
 static void pkc_draw(const int16_t *pic) { pkc_draw_at(pic, ART_W, 0); }
 
 static int16_t g_cockpit_wide[FB_MAXW * FB_MAXH];       /* the cockpit as wide as the picture (cockpit_widen) */
-static int g_cockpit_wide_w, g_cockpit_wide_loads = -1;
+static int g_cockpit_wide_w, g_cockpit_wide_loads = -1, g_cockpit_sent = -1;
 
 /*
  * PAINTED COCKPITS FOR A WIDER PICTURE (the port's own).  <home>/cockpits/ or <the program's
@@ -5290,7 +5292,7 @@ static void cockpit_load(int model, int livery)
     snprintf(file, sizeof file, "build/dec/GAME/COCK%02d%cL.PKC", model, livery ? 'B' : 'A');
     g_have_cockpit = pkc_load(file, g_cockpit);
     if (g_cockpit_art) { stbi_image_free(g_cockpit_art); g_cockpit_art = NULL; }
-    g_cockpit_wide_w = 0;
+    g_cockpit_wide_w = 0; g_cockpit_sent = -1;
     for (int full = 1; full >= 0 && !g_cockpit_art; full--) {
         char name[64];
         int w = 0, h = 0;
@@ -5375,6 +5377,48 @@ static void cockpit_widen(void)
     g_cockpit_wide_w = FB_W; g_cockpit_wide_loads = g_pkc_loads;
 }
 
+/* THE PAINTED COCKPIT ON THE CARD, at the screen's resolution: the picture sent once (the sides'
+   middle the game's own, from its numbers, for the card's smaller copies to blend into), and the
+   pixels it covers marked in the flat layer every picture -- what is drawn over them (needles,
+   radar, lamps) is the flat layer's again */
+#ifdef OS_GPU
+static void cockpit_send(void)
+{
+    const int aw = g_cockpit_art_w, ah = g_cockpit_art_h;
+    unsigned char *rgba = malloc((size_t)aw * (size_t)ah * 4);
+    if (!rgba) return;
+    const int mid0 = (ART_COLS - ART_W) / 2;
+    for (int y = 0; y < ah; y++)
+        for (int x = 0; x < aw; x++) {
+            const unsigned char *p = g_cockpit_art + 4 * ((size_t)y * aw + x);
+            unsigned char *q = rgba + 4 * ((size_t)y * aw + x);
+            const int fx = x * ART_COLS / aw - mid0, fy = y * ART_H / ah;
+            if (!g_cockpit_art_full && fx >= 0 && fx < ART_W) {
+                const int16_t n = g_cockpit[fy * ART_W + fx];
+                q[0] = (unsigned char)(g_pal[n & 255] >> 16); q[1] = (unsigned char)(g_pal[n & 255] >> 8); q[2] = (unsigned char)g_pal[n & 255];
+                q[3] = n >= 0 ? 255 : 0;
+            } else if (p[3] < 128 || (p[0] > 200 && p[1] < 60 && p[2] > 200)) q[0] = q[1] = q[2] = q[3] = 0;
+            else { q[0] = p[0]; q[1] = p[1]; q[2] = p[2]; q[3] = 255; }
+        }
+    gpu_cockpit(rgba, aw, ah);
+    free(rgba);
+    g_cockpit_sent = g_pkc_loads;
+}
+
+static void cockpit_mark(void)
+{
+    const int x0 = FB_W / 2 - ART_COLS / 2, m0 = (FB_W - ART_W) / 2;
+    for (int y = 0; y < ART_H; y++)
+        for (int x = x0 < 0 ? 0 : x0; x < x0 + ART_COLS && x < FB_W; x++) {
+            if (!g_cockpit_art_full && x >= m0 && x < m0 + ART_W) continue;
+            const int i = y * FB_W + x;
+            if (g_cockpit_wide[i] < 0) continue;
+            g_lay_op[i] = 2; g_lay_scene[i] = fb[i];
+        }
+    gpu_cockpit_at((float)x0, (float)ART_COLS);
+}
+#endif
+
 static void cockpit_draw(void)
 {
     if (!g_have_cockpit) return;
@@ -5384,6 +5428,12 @@ static void cockpit_draw(void)
     g_ox = 0;
     pkc_draw_at(g_cockpit_wide, FB_W, 0);
     g_ox = ox;
+#ifdef OS_GPU
+    if (g_cockpit_art && g_lay_on) {
+        if (g_cockpit_sent != g_pkc_loads) cockpit_send();
+        cockpit_mark();
+    }
+#endif
 }
 
 static float wrap_pi(float a)
@@ -6376,10 +6426,20 @@ static void dash_line(int x0, int y0, int x1, int y1, uint8_t col)
     }
 }
 
-static void dash_needle(int px, int py, int len, float angle, int colour)
+/* (hd: over a painted cockpit on the card, the card draws it at the screen's pixels) */
+static void dash_needle(int px, int py, int len, float angle, int colour, int hd)
 {
     float a = angle - 2.0f;
     px *= LAY_S; py *= LAY_S; len *= LAY_S;
+#ifdef OS_GPU
+    if (hd && g_cockpit_art && g_lay_on) {
+        const float hx = (float)(px + g_ox) + 0.5f, hy = (float)py + 0.5f;
+        gpu_needle(hx, hy, hx + (float)len * sinf(a), hy - (float)len * cosf(a), 1.6f, 0.4f, g_pal[colour & 255]);
+        return;
+    }
+#else
+    (void)hd;
+#endif
     int tx = (int)((float)px + (float)len * sinf(a));
     int ty = (int)((float)py - (float)len * cosf(a));
     const uint8_t col = (uint8_t)colour;
@@ -7314,7 +7374,7 @@ static void s2_hud_draw(float dt)
         s2_text(0x10b, 0xb1, buf, 2, 5, 1);
         snprintf(buf, sizeof buf, "%d", h.gear);
         s2_text(299, 0xb1, buf, 2, 4, 2);
-        dash_needle(0x10f, 0xa8, 0x1e, g_s2_dial_revs * 3.1415927f, 0x5b);
+        dash_needle(0x10f, 0xa8, 0x1e, g_s2_dial_revs * 3.1415927f, 0x5b, 0);
         }
     }
     if (!h.finished && h.view != 1) {                    /* (0x45882: not over the trackside cameras) */
@@ -7510,8 +7570,8 @@ static void hud_draw(int instruments)
     if (instruments && g_views[g_view].cockpit) {
         cockpit_draw();
         if (g_have_dash) {
-            dash_needle(g_dash[2], g_dash[3], g_dash[0], g_needle_speed, 255);
-            dash_needle(g_dash[5], g_dash[6], g_dash[0], g_needle_rpm, 255);
+            dash_needle(g_dash[2], g_dash[3], g_dash[0], g_needle_speed, 255, 1);
+            dash_needle(g_dash[5], g_dash[6], g_dash[0], g_needle_rpm, 255, 1);
             int gear = g_pc.gear;
             if (gear >= 0 && gear <= 6)
                 /* the lamps' places ARE in the picture's own pixels (the H section's are doubled) */
@@ -7524,7 +7584,7 @@ static void hud_draw(int instruments)
         hud_text(0x10f, 0xbb, buf, 2, 7, 1);
         snprintf(buf, sizeof buf, "\001%d", g_pc.gear);
         hud_text(0x130, 0xbb, buf, 2, 1, 1);
-        dash_needle(0x10f, 0xa8, 0x1e, g_needle_rpm, 0x75);
+        dash_needle(0x10f, 0xa8, 0x1e, g_needle_rpm, 0x75, 0);
         LAY_MID();
     }
 
