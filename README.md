@@ -22,9 +22,9 @@ without the changes below.
 
 ## You need the original games
 
-No game files are included. *Screamer* is still sold (GOG, Steam). Point the program at the
-folder that holds `DATA` and `GFX`, e.g. `screamer-remastered -data "C:\GOG Games\Screamer"`, or
-copy the folder next to the program as `screamer` (*Screamer 2*'s as `screamer2`).
+No game files are included. *Screamer* is still sold (GOG, Steam). The program finds GOG's and
+Steam's copies by itself, or put it (with `SDL2.dll`) into the game's folder. Otherwise give it
+the folder that holds `DATA` and `GFX`: `screamer-remastered -data "D:\Games\Screamer"`.
 
 The CD music is played from GOG's disc image. Alternatively, put `track_02.ogg`, `track_03.ogg`
 ... (or `.mp3` / `.wav`) into a `music` folder inside the game's folder.

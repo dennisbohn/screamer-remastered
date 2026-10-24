@@ -470,7 +470,8 @@ static void os_help(const char *me)
 "OPTIONS\n"
 "  -h, --help     this text\n""  --version      the version, and nothing else\n"
 "  -data DIR      your copy of the game: the folder that holds its DATA and GFX folders\n"
-"                 default: $SCREAMER_DATA, ./screamer, <program>/screamer\n"
+"                 default: $SCREAMER_DATA, the program's own folder, the current one, a\n"
+"                 folder screamer beside them, C:\\GOG Games\\Screamer, Steam's Screamer\n"
 "                 (a folder of files already unpacked with tools/extract.sh works too)\n"
 "  -game N        1 = Screamer, 2 = Screamer 2.  Default: the one whose files are found\n"
 "                 (./screamer, ./screamer2); both found: a first page chooses (the last\n"
@@ -629,14 +630,25 @@ void os_init(int argc, char **argv)
     } else {
         /* a copy of the game first, then files already unpacked; Screamer 2's are
            the same places with a 2 at the end of the name */
-        static const char *const where[7] = { "screamer%s", "%s/screamer%s", "%s/../../screamer%s", "build/dec%s",
-                                              "%s/data%s", "%s/../../build/dec%s", "data%s" };
+        /* the program's own folder and the current one (the program put into the game's folder),
+           then a folder screamer / screamer2 beside them, the developer's places, and last where
+           GOG and Steam put their copies */
+        static const char *const where[] = { "%s", ".", "screamer%s", "%s/screamer%s", "%s/../../screamer%s", "build/dec%s",
+                                             "%s/data%s", "%s/../../build/dec%s", "data%s"
+#ifdef _WIN32
+                                             , "C:/GOG Games/Screamer%s", "C:/Program Files (x86)/GOG Galaxy/Games/Screamer%s",
+                                             "C:/Program Files (x86)/Steam/steamapps/common/Screamer%s"
+#endif
+        };
         char found[3][700] = { "", "", "" };
         for (int g = 1; g <= 2; g++)
-            for (int i = 0; i < 7 && !found[g][0]; i++) {
+            for (size_t i = 0; i < sizeof where / sizeof where[0] && !found[g][0]; i++) {
                 char cand[700];
-                if (where[i][0] == '%' && where[i][1] == 's' && where[i][2] == '/') snprintf(cand, sizeof cand, where[i], exe, g == 2 ? "2" : "");
-                else snprintf(cand, sizeof cand, where[i], g == 2 ? "2" : "");
+                const char *const two = g == 2 ? (strstr(where[i], "Files") || strstr(where[i], "GOG Games") ? " 2" : "2") : "";
+                if (!strcmp(where[i], "%s")) snprintf(cand, sizeof cand, "%s", exe);
+                else if (!strcmp(where[i], ".")) snprintf(cand, sizeof cand, ".");
+                else if (where[i][0] == '%' && where[i][1] == 's' && where[i][2] == '/') snprintf(cand, sizeof cand, where[i], exe, two);
+                else snprintf(cand, sizeof cand, where[i], two);
                 if (is_dir(cand) && which_game(cand) == g) snprintf(found[g], 700, "%s", cand);
             }
         /* no -game: the one that is there; both there: Screamer (the choice between them is the menu's) */
