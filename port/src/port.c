@@ -473,9 +473,9 @@ static void os_help(const char *me)
 "                 (also --data; a folder of files unpacked with tools/extract.sh works too).\n"
 "                 Without it: the program's own folder, else where GOG, Steam or another\n"
 "                 installer put the game (as they record it in the registry)\n"
-"  -game N        1 = Screamer, 2 = Screamer 2.  Default: the one whose files are found\n"
-"                 (./screamer, ./screamer2); both found: a first page chooses (the last\n"
-"                 choice lit); -data DIR names either game's folder\n"
+"  -game N        1 = Screamer, 2 = Screamer 2.  Default: the one that is found; both found:\n"
+"                 a first page chooses (the last choice lit); -data DIR names either game's\n"
+"                 folder\n"
 "  -res svga|native  for this run: 640 x 400, or as many rows as the window has; the one kept is\n"
 "                 RES in OPTIONS / DISPLAY (resolution= in screamer-remastered.cfg)\n"
 #ifdef OS_GPU
