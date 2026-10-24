@@ -15,7 +15,10 @@ What changed from OpenScreamer (2026-10-23..24; the details in `docs/GPU.md` and
   a face, `gpu_tri.fade`; the mirror by raster_job, `g_soft_scene`, laid over by `s2_mirror_lay`).
 - A race is as wide as the window (16:9 = 854 x 400; `pic_follow`, the flat things at `g_ox`:
   LAY_LEFT / MID / RIGHT; `OS_ASPECT=16:9` a test; DISPLAY's ASPECT 4:3, `aspect=4:3`, keeps a race
-  4:3); menus stay 4:3. The cockpit's sides are drawn out, the middle as it is (`cockpit_widen`).
+  4:3); menus stay 4:3. The cockpit's sides are drawn out, the middle as it is (`pic_draw_wide`).
+  Screamer 2's races the same: its race screen at LAY_LEFT / RIGHT / MID, a box of the game's full
+  width (`s2_dark_box` 0, 320) across the picture, view 6's dashboard drawn out, the mirror 640 wide
+  in the middle.
   2026-10-24, Dennis: no AI-made or painted cockpits -- a new Screamer is out, too touchy; the
   loader for them, the card's layer at the screen's resolution and the smoothed needles were built
   and taken out again (commits f8f9b65, 862fb8d).

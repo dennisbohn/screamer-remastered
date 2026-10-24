@@ -52,8 +52,8 @@ static int poll_event(SDL_Event *e);
  * A RACE AS WIDE AS THE WINDOW (M4, the port's own): Screamer's races have as many columns as the
  * window's shape asks for at 400 rows (480 a unit of width over height: 16:9 is 854), the lens as
  * ever, so more is seen at the sides.  The flat things keep their 640 columns, put at the left,
- * the middle or the right of the picture (g_ox, LAY_LEFT / LAY_MID / LAY_RIGHT); the menus and
- * Screamer 2 stay 640 wide.  pic_follow sets it, every picture.
+ * the middle or the right of the picture (g_ox, LAY_LEFT / LAY_MID / LAY_RIGHT); the menus stay
+ * 640 wide.  Screamer 2's races the same.  pic_follow sets it, every picture.
  */
 #define FB_MAXW 1712               /* 32:9 */
 #define FB_MAXH 400
@@ -4077,6 +4077,11 @@ static void s2_render(const camera *cam, const sky *sk)
         g_vh = s2_screen_hi() ? m.rows : m.rows * LAY_S; g_cy = EYE_LINE * (float)g_vh;
         g_hide = g_s2_obj[s2_player()];                       /* (0x2b6b4: the car and its shadow are not in it) */
         if (g_s2_shadow[0]) { shadow_z = g_s2_shadow[0]->z; g_s2_shadow[0]->z = -1.0e6f; }
+        /* (a wider picture: the mirror as the game's, 640 wide, its frame in the middle) */
+        const int fw = FB_W;
+        int clip[4];
+        memcpy(clip, g_clip, sizeof clip);
+        FB_W = ART_W; g_clip[0] = 0; g_clip[1] = ART_W;
         g_soft_scene = 1;
         render_frame(&mc, sk);
         g_soft_scene = 0;
@@ -4084,6 +4089,8 @@ static void s2_render(const camera *cam, const sky *sk)
         for (int y = 0; y < g_s2_mirror_h && y < 100; y++)
             for (int x = 0; x < g_s2_mirror_w; x++)
                 g_s2_mirror_px[y * (FB_MAXW / 2) + x] = fb[y * FB_W + (FB_W - 2 - 2 * x)];
+        FB_W = fw;
+        memcpy(g_clip, clip, sizeof clip);
         g_s2_mirror_have = 1;
         if (g_s2_shadow[0]) g_s2_shadow[0]->z = shadow_z;
         g_hide = hid; g_vh = vh; g_cy = cy;
@@ -4096,7 +4103,7 @@ static void s2_mirror_lay(void)
 {
     if (!g_s2_mirror_have) return;
     /* (the mirror is with the top's things in a taller picture) */
-    const int x0 = 80 * LAY_S, y0 = 14 * LAY_S;
+    const int x0 = 80 * LAY_S + (FB_W - ART_W) / 2, y0 = 14 * LAY_S;
     for (int y = 0; y < g_s2_mirror_h && y0 + y < FB_H; y++) {
         uint8_t *row = fb + (y0 + y) * FB_W + x0;
         int x = 0;
@@ -4104,7 +4111,7 @@ static void s2_mirror_lay(void)
         LAY_RUN(row, x);
     }
     if (g_s2_mirror_frame_ok < 0) { g_s2_mirror_frame_ok = pkc_load(s2_screen_hi() ? "build/dec/GAME1/MIRROR_H.PKC" : "build/dec/GAME1/MIRROR_L.PKC", g_s2_mirror_frame); g_pkc_loads++; }
-    if (g_s2_mirror_frame_ok > 0) { pkc_draw(g_s2_mirror_frame); }
+    if (g_s2_mirror_frame_ok > 0) { const int ox = g_ox; LAY_MID(); pkc_draw(g_s2_mirror_frame); g_ox = ox; }
 }
 
 /* the path sample nearest a point -- "where on the lap am I?" */
@@ -5331,7 +5338,7 @@ static void cockpit_load(int model, int livery)
  */
 static int16_t g_cockpit_wide[FB_MAXW * FB_MAXH];
 static int g_cockpit_wide_w, g_cockpit_wide_loads = -1;
-static void cockpit_widen(void)
+static void pic_widen(const int16_t *pic, int16_t *out)
 {
     const int W = FB_W, keep = 200, half_old = ART_W / 2, half_new = W / 2;
     const double reach_old = half_old - keep, reach_new = half_new - keep;
@@ -5342,20 +5349,25 @@ static void cockpit_widen(void)
         int ox = (int)floor(half_old + (x + 0.5 >= half_new ? od : -od));
         if (ox < 0) ox = 0;
         if (ox > ART_W - 1) ox = ART_W - 1;
-        for (int y = 0; y < ART_H; y++) g_cockpit_wide[y * W + x] = g_cockpit[y * ART_W + ox];
+        for (int y = 0; y < ART_H; y++) out[y * W + x] = pic[y * ART_W + ox];
     }
-    g_cockpit_wide_w = W; g_cockpit_wide_loads = g_pkc_loads;
+}
+
+/* a 640-wide picture across the whole of a wider one: drawn out once (wide, made for *made_w
+   columns and the picture loaded *made_loads-th), then as it is */
+static void pic_draw_wide(const int16_t *pic, int16_t *wide, int *made_w, int *made_loads)
+{
+    if (FB_W == ART_W) { pkc_draw(pic); return; }
+    if (*made_w != FB_W || *made_loads != g_pkc_loads) { pic_widen(pic, wide); *made_w = FB_W; *made_loads = g_pkc_loads; }
+    const int ox = g_ox;
+    g_ox = 0;
+    pkc_draw_at(wide, FB_W, 0);
+    g_ox = ox;
 }
 
 static void cockpit_draw(void)
 {
-    if (!g_have_cockpit) return;
-    if (FB_W == ART_W) { pkc_draw(g_cockpit); return; }
-    if (g_cockpit_wide_w != FB_W || g_cockpit_wide_loads != g_pkc_loads) cockpit_widen();
-    const int ox = g_ox;
-    g_ox = 0;
-    pkc_draw_at(g_cockpit_wide, FB_W, 0);
-    g_ox = ox;
+    if (g_have_cockpit) pic_draw_wide(g_cockpit, g_cockpit_wide, &g_cockpit_wide_w, &g_cockpit_wide_loads);
 }
 
 static float wrap_pi(float a)
@@ -6930,8 +6942,10 @@ static void s2_dark_box(int x, int y, int w, int h)
     const uint8_t *dark = g_s2_dark[0];
     s2_dark_make();
     x &= ~3; w &= ~3;
+    /* (a wider picture: a box at g_ox; one the game's screen's width, the picture's) */
+    const int all = x == 0 && w == 320, x0 = all ? 0 : x * LAY_S + g_ox, x1 = all ? FB_W : (x + w) * LAY_S + g_ox;
     for (int yy = y * LAY_S; yy < (y + h) * LAY_S && yy < FB_H; yy++)
-        for (int xx = x * LAY_S; xx < (x + w) * LAY_S && xx < FB_W; xx++) {
+        for (int xx = x0 < 0 ? 0 : x0; xx < x1 && xx < FB_W; xx++) {
             lay_dark(yy * FB_W + xx, dark);
         }
 }
@@ -7025,7 +7039,11 @@ static void s2_dash_draw(const s2_hud_state *h)
     /* (the scene stops at the view's rows; where the picture is open below them -- a few
        pixels at its upper edge -- the port leaves black: its own) */
     if (g_vh < FB_H) { memset(fb + g_vh * FB_W, pal_near(0), (size_t)((FB_H - g_vh) * FB_W)); LAY_RUN(fb + g_vh * FB_W, (FB_H - g_vh) * FB_W); }
-    if (g_s2_cock_ok) pkc_draw(g_s2_cock);
+    if (g_s2_cock_ok) {
+        static int16_t wide[FB_MAXW * FB_MAXH];
+        static int wide_w, wide_loads = -1;
+        pic_draw_wide(g_s2_cock, wide, &wide_w, &wide_loads);
+    }
     const int gear = h->gear < 0 ? 0 : h->gear > 4 ? 4 : h->gear;
     if (s2_screen_hi()) hud_sprite_px(r[12 + gear * 2], r[13 + gear * 2], h->dash * 5 + 0x46 + gear);
     else hud_sprite_draw(r[12 + gear * 2] / 2, r[13 + gear * 2] / 2, h->dash * 5 + 0x46 + gear);
@@ -7165,7 +7183,7 @@ static void s2_pause_open(void)
 static void s2_pause_line(int x0, int y0, int y1, int colour)
 {
     for (int y = y0 * LAY_S; y < (y1 + 1) * LAY_S && y < FB_H; y++)
-        for (int x = x0 * LAY_S; x < x0 * LAY_S + LAY_S && x < FB_W; x++) { fb[y * FB_W + x] = (uint8_t)colour; LAY_PUT(y * FB_W + x); }
+        for (int x = x0 * LAY_S + g_ox; x < x0 * LAY_S + LAY_S + g_ox && x < FB_W; x++) { fb[y * FB_W + x] = (uint8_t)colour; LAY_PUT(y * FB_W + x); }
 }
 
 static void s2_pause_draw(float dt)
@@ -7265,6 +7283,9 @@ static void s2_hud_draw(float dt)
     if (!g_nfont || !g_nspr) return;
     s2_hud(&h);
     if (getenv("OS_S2ENDTEST")) { h.finished = 1; g_s2_end_t = (float)atof(getenv("OS_S2ENDTEST")); }   /* a test: the end's screen, so many seconds in */
+    /* (a wider picture: LAP and the clocks at the left, POSITION, the best times and the dial at
+       the right, the rest in the middle) */
+    LAY_MID();
     /*
      * "1ST" OVER THE LEADING CAR (0x4962c, called after the scene is drawn and before the
      * race screen, in every view): for the car that is first, when it is not the player's
@@ -7281,7 +7302,7 @@ static void s2_hud_draw(float dt)
         if (v.z > 1.0f && v.z <= 20000.0f) {
             const float f = g_focal_x / (float)LAY_S;
             const int lx = (int)(160.0f + v.x * f / v.z) - 10, ly = (int)(g_cy / (float)LAY_S - v.y * f / v.z) - 12;
-            if (lx > -20 && lx < 320 && ly > -16 && ly < g_vh / LAY_S) { hud_sprite_draw(lx, ly, 0x26); }
+            if (lx > -20 - g_ox / LAY_S && lx < 320 + g_ox / LAY_S && ly > -16 && ly < g_vh / LAY_S) { hud_sprite_draw(lx, ly, 0x26); }
         }
     }
     /* the instrument (0x46b76): the dial, the speed, the gear, the rev needle -- both eased
@@ -7297,6 +7318,7 @@ static void s2_hud_draw(float dt)
     {
         if (h.view == 6) s2_dash_draw(&h);                /* (0x46b76: view 6 the dashboard, view 1 nothing, else the dial) */
         else if (h.view != 1) {
+        LAY_RIGHT();
         hud_sprite_draw(0xee, 0x84, 0x1a);
         /* in miles (/ 1.6) when GAME.TXT's word for the unit begins with an M (0x2ef4e sets
            0x124654 so; the English file's is MPH) */
@@ -7305,20 +7327,24 @@ static void s2_hud_draw(float dt)
         snprintf(buf, sizeof buf, "%d", h.gear);
         s2_text(299, 0xb1, buf, 2, 4, 2);
         dash_needle(0x10f, 0xa8, 0x1e, g_s2_dial_revs * 3.1415927f, 0x5b);
+        LAY_MID();
         }
     }
     if (!h.finished && h.view != 1) {                    /* (0x45882: not over the trackside cameras) */
         if (h.ncars > 1 && (!(h.mode & 4) || h.ghost)) {
+            LAY_RIGHT();
             if (h.position == 1) hud_sprite_draw(0x10e, 4, 0x72);
             s2_text(0x138 - s2_text_wide(g_s2_text[6], 3, -1), 2, g_s2_text[6], 3, 3, -1);
             snprintf(buf, sizeof buf, "%d", h.position);
             s2_text(0x11e, 0xb, buf, 1, 1, 2);
+            LAY_MID();
         }
         if (*h.message_left > 0.0f) {
             if (h.message[1] == '+') s2_text_centred(0x23, h.message, 8, 3, -1);
             else s2_text_centred(0x23, h.message, 7, 1, -1);
         }
         if (!(h.mode & 8)) {
+        LAY_LEFT();
         s2_text(8, 2, g_s2_text[7], 3, 3, -1);
         snprintf(buf, sizeof buf, "%d:", h.lap);         /* ("%d%c": the figures' font has ':' after '9' and nothing else) */
         int w = s2_text_wide(buf, 1, 2);
@@ -7331,10 +7357,12 @@ static void s2_hud_draw(float dt)
         buf[0] = 1; s2_clock(buf + 1, sizeof buf - 1, h.total);
         s2_text(8, 0x48, g_s2_text[1], 3, 3, -1);
         s2_text(8, 0x50, buf, 3, 1, -1);
+        LAY_RIGHT();
         s2_text(0x10e, 0x38, g_s2_text[2], 3, 3, -1);
         s2_text(0x10e, 0x40, h.best_lap, 3, 1, -1);
         s2_text(0x10e, 0x48, g_s2_text[3], 3, 3, -1);
         s2_text(0x10e, 0x50, h.best_total, 3, 1, -1);
+        LAY_MID();
         }
         if (*h.best_lap_left > 0.0f && ((int)(*h.best_lap_left * 2.0f) & 1)) s2_text_centred(0xf, g_s2_text[4], 0, 1, 2);
         if (h.mode & 8) {
@@ -7342,16 +7370,21 @@ static void s2_hud_draw(float dt)
                lap's clock and the best lap above them */
             for (int k = 0; k < 5; k++) {
                 const char letter[2] = { (char)('A' + k), 0 };
+                LAY_LEFT();
                 s2_text(8, k * 8 + 0x38, letter, 3, 3, -1);
-                s2_text(0x105, k * 8 + 0x38, letter, 3, 3, -1);
                 s2_text(0x12, k * 8 + 0x38, h.split_now + k * 0xb, 3, 1, -1);
+                LAY_RIGHT();
+                s2_text(0x105, k * 8 + 0x38, letter, 3, 3, -1);
                 s2_text(0x10a, k * 8 + 0x38, h.split_best + k * 0xb, 3, 1, -1);
             }
             buf[0] = 1; s2_clock(buf + 1, sizeof buf - 1, h.this_lap);
+            LAY_LEFT();
             s2_text(8, 0x10, g_s2_text[0], 3, 3, -1);
             s2_text(8, 0x18, buf, 3, 1, -1);
+            LAY_RIGHT();
             s2_text(0x10e, 0x10, g_s2_text[2], 3, 3, -1);
             s2_text(0x10e, 0x18, h.best_lap, 3, 1, -1);
+            LAY_MID();
         }
         /* who is where (0x456fb): the bar, every other car's mark 50 pixels a 200000 of the
            track ahead of or behind the middle, the player's in the middle */
@@ -7376,7 +7409,9 @@ static void s2_hud_draw(float dt)
             s2_dark_box(0, 0xb4, 0x140, 0x14);
             if (view >= 0 && view < 7 && word[view] >= 0 && team >= 0 && team < 4) {
                 snprintf(buf, sizeof buf, "%s - %s", g_s2_team[team], g_s2_gt[word[view]]);
+                LAY_LEFT();
                 s2_text(10, 0xb4, buf, 0, 1, 2);
+                LAY_MID();
             }
         }
     }
@@ -11460,8 +11495,8 @@ static void lerp_undo(int applied)
 }
 
 /* M4: how wide the race's picture is: the window's shape (OS_ASPECT=<w>:<h> or a number, a test,
-   over it); 4:3 or narrower, ASPECT 4:3 (aspect=4:3), and Screamer 2, as ever.  The texture again
-   when it changes */
+   over it); 4:3 or narrower, and ASPECT 4:3 (aspect=4:3), as ever.  The texture again when it
+   changes */
 static SDL_Texture *pic_follow(SDL_Window *win, SDL_Texture *tex)
 {
     int dw = 0, dh = 0, w = ART_W;
@@ -11473,7 +11508,7 @@ static SDL_Texture *pic_follow(SDL_Window *win, SDL_Texture *tex)
     const char *f = getenv("OS_ASPECT");
     if (f) { double x = 0, y = 0; a = sscanf(f, "%lf:%lf", &x, &y) == 2 && y > 0 ? x / y : atof(f); }
     if (a > 32.0 / 9.0) a = 32.0 / 9.0;
-    if (os_game() == 1 && !g_cfg.narrow && a > 4.0 / 3.0 + 0.02) w = ((int)(a * 480.0 + 0.5) + 1) & ~1;
+    if (!g_cfg.narrow && a > 4.0 / 3.0 + 0.02) w = ((int)(a * 480.0 + 0.5) + 1) & ~1;
     if (w > FB_MAXW) w = FB_MAXW;
     if (w == FB_W) return tex;
     FB_W = w;
@@ -12551,6 +12586,7 @@ static int session(int argc, char **argv)
                    the key's word and waits for it to be let go, car +0x140 -- and a press handed on
                    for one picture only was lost whenever that picture ran no race step) */
                 s2_controls_pad(ct.throttle, ct.brake, ct.steer, ct.up_held, ct.down_held);
+                if (getenv("OS_VIEW")) s2_view(g_s2_views[atoi(getenv("OS_VIEW")) % 5]);   /* (a test: F1-F4 and 6 as 0-4, as soon as the game takes it) */
                 s2_race_step();
                 owed -= s2_every();
             }
