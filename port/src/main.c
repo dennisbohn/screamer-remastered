@@ -5429,6 +5429,7 @@ static float g_camera_hi = 300.0f;
  * take its new height and the overlay appear.
  */
 static struct { int on; float x, y, z, yaw, pitch, roll; } g_swoop;
+static int g_lerp_ok;              /* a state before the last step to draw from (lerp_keep) */
 
 /*
  * The dashboard: COCKnn{A,B}{L,H}.PKC in GAME.DAT (L = 320x200).  A .PKC is a
@@ -5590,6 +5591,7 @@ static void view_change(int to)
     const camera *from = &old;
     g_view = ((to % NVIEWS) + NVIEWS) % NVIEWS;
     g_chase.init = 0;
+    g_lerp_ok = 0;                     /* the next picture from the new view as it is */
     chase_step();                      /* the new view's camera, settled */
     view_pose(&now);
     g_swoop.x = from->x - now.x; g_swoop.y = from->y - now.y; g_swoop.z = from->z - now.z;
@@ -9752,7 +9754,7 @@ static int menu_run(int *track, int *car)
     int scr_shown = -1, leaving_set = 0;
     float fade = 0.0f, fade_in = 0.6f;
     char page_sig[512] = "";
-    Uint32 last_t = 0;
+    Uint64 last_t = 0;                  /* (the fine clock: whole milliseconds jitter on a fast screen) */
     int screen = 0, pick[2] = { 0, 0 }, loaded_screen = -1, loaded_pick = -1;
     /* pages 5 and 6 are the championship: NEW / RESUME, and its stage screens */
     int page = 0, sel[11] = { 0 }, mode = 1, resume = 0, tick = 0;
@@ -9977,8 +9979,8 @@ static int menu_run(int *track, int *car)
         static float idle;
         if (shotfile[0]) steps = getenv("OS_MENU_STEPS") ? atoi(getenv("OS_MENU_STEPS")) : 100;
         else {
-            Uint32 now_t = SDL_GetTicks();
-            dt = last_t ? (float)(now_t - last_t) / 1000.0f : 0.02f;
+            Uint64 now_t = SDL_GetPerformanceCounter();
+            dt = last_t ? (float)((double)(now_t - last_t) / (double)SDL_GetPerformanceFrequency()) : 0.02f;
             last_t = now_t;
             if (dt < 0.005f) dt = 0.005f;
             if (dt > 0.1f) dt = 0.1f;
@@ -11586,6 +11588,143 @@ static int s2_menu(void)
     }
 }
 
+/*
+ * THE PICTURE BETWEEN TWO STEPS (the port's own).  The race moves in 1/50 s steps; a faster
+ * screen would show each step two or three times.  So what is drawn lies between the state
+ * before the last step and after it, as far as the time since it says: one step behind,
+ * but smooth.  Only the drawing sees it -- lerp_apply before, lerp_undo after; the steps
+ * themselves are untouched.  Whatever jumped further than a step can go is drawn as it is.
+ */
+typedef struct { float x, y, z, yaw, pitch, roll; } lerp_place;
+typedef struct {
+    int ncar;
+    lerp_place car[MAX_CARS];
+    car_pose pose[MAX_CARS];
+    float pc[7];                     /* the player's x, y, z, yaw, drift, pitch, roll */
+    float chase[4];
+    float swoop[6]; int swoop_on;
+    camera intro;
+} lerp_state;
+static lerp_state g_lerp_was, g_lerp_now;
+static int g_lerp_on;
+#define LERP_JUMP 1500.0f            /* 4.5 m in a step: 820 km/h */
+
+static void lerp_take(lerp_state *s)
+{
+    s->ncar = g_ncar;
+    for (int i = 0; i < g_ncar; i++) {
+        const scene_object *o = &g_car[i];
+        s->car[i] = (lerp_place){ o->x, o->y, o->z, o->yaw, o->pitch, o->roll };
+        if (o->pose) s->pose[i] = *o->pose;
+    }
+    const float pc[7] = { g_pc.x, g_pc.y, g_pc.z, g_pc.yaw, g_pc.drift, g_pc.pitch, g_pc.roll };
+    memcpy(s->pc, pc, sizeof pc);
+    s->chase[0] = g_chase.yaw; s->chase[1] = g_chase.pitch; s->chase[2] = g_chase.roll; s->chase[3] = g_chase.height;
+    s->swoop[0] = g_swoop.x; s->swoop[1] = g_swoop.y; s->swoop[2] = g_swoop.z;
+    s->swoop[3] = g_swoop.yaw; s->swoop[4] = g_swoop.pitch; s->swoop[5] = g_swoop.roll;
+    s->swoop_on = g_swoop.on;
+    s->intro = g_in.view;
+}
+
+static void lerp_put(const lerp_state *s)
+{
+    for (int i = 0; i < s->ncar && i < g_ncar; i++) {
+        scene_object *o = &g_car[i];
+        const lerp_place *p = &s->car[i];
+        o->x = p->x; o->y = p->y; o->z = p->z; o->yaw = p->yaw; o->pitch = p->pitch; o->roll = p->roll;
+        if (o->pose) *(car_pose *)o->pose = s->pose[i];
+    }
+    g_pc.x = s->pc[0]; g_pc.y = s->pc[1]; g_pc.z = s->pc[2]; g_pc.yaw = s->pc[3];
+    g_pc.drift = s->pc[4]; g_pc.pitch = s->pc[5]; g_pc.roll = s->pc[6];
+    g_chase.yaw = s->chase[0]; g_chase.pitch = s->chase[1]; g_chase.roll = s->chase[2]; g_chase.height = s->chase[3];
+    g_swoop.x = s->swoop[0]; g_swoop.y = s->swoop[1]; g_swoop.z = s->swoop[2];
+    g_swoop.yaw = s->swoop[3]; g_swoop.pitch = s->swoop[4]; g_swoop.roll = s->swoop[5];
+    g_swoop.on = s->swoop_on;
+    g_in.view = s->intro;
+}
+
+static float lerp_f(float a, float b, float k) { return a + (b - a) * k; }
+static float lerp_a(float a, float b, float k) { return b - wrap_pi(b - a) * (1.0f - k); }
+static int lerp_far(float dx, float dy, float dz)
+{
+    return dx * dx + dy * dy + dz * dz > LERP_JUMP * LERP_JUMP;
+}
+
+static void lerp_place_mix(lerp_place *o, const lerp_place *a, const lerp_place *b, float k)
+{
+    o->x = lerp_f(a->x, b->x, k); o->y = lerp_f(a->y, b->y, k); o->z = lerp_f(a->z, b->z, k);
+    o->yaw = lerp_a(a->yaw, b->yaw, k); o->pitch = lerp_a(a->pitch, b->pitch, k); o->roll = lerp_a(a->roll, b->roll, k);
+}
+
+static void lerp_pose_mix(car_pose *o, const car_pose *a, const car_pose *b, float k)
+{
+    /* the wheels: only while they turn less than a quarter a step (faster, they are the blur) */
+    if (fabsf(wrap_pi(b->spin - a->spin)) < 1.5f) o->spin = lerp_a(a->spin, b->spin, k);
+    o->steer = lerp_f(a->steer, b->steer, k);
+    o->body_pitch = lerp_f(a->body_pitch, b->body_pitch, k);
+    o->body_roll = lerp_f(a->body_roll, b->body_roll, k);
+    o->body_drop = lerp_f(a->body_drop, b->body_drop, k);
+    float d = b->env_scroll - a->env_scroll;
+    if (d > 128.0f) d -= 256.0f;
+    if (d < -128.0f) d += 256.0f;
+    o->env_scroll = fmodf(b->env_scroll - d * (1.0f - k) + 256.0f, 256.0f);
+    for (int w = 0; w < 4; w++) {
+        if (fabsf(wrap_pi(b->wheel_spin[w] - a->wheel_spin[w])) < 1.5f)
+            o->wheel_spin[w] = lerp_a(a->wheel_spin[w], b->wheel_spin[w], k);
+        o->wheel_in[w] = lerp_f(a->wheel_in[w], b->wheel_in[w], k);
+    }
+}
+
+/* before every step: the state it starts from */
+static void lerp_keep(void)
+{
+    if (!g_lerp_on) return;
+    lerp_take(&g_lerp_was);
+    g_lerp_ok = 1;
+}
+
+/* before drawing: k of the way from before the last step to after it */
+static int lerp_apply(float k)
+{
+    if (!g_lerp_on || !g_lerp_ok || k >= 1.0f) return 0;
+    if (k < 0.0f) k = 0.0f;
+    const lerp_state *a = &g_lerp_was;
+    lerp_state *b = &g_lerp_now;
+    lerp_take(b);
+    static lerp_state mix;
+    mix = *b;
+    if (a->ncar == b->ncar)
+        for (int i = 0; i < b->ncar; i++) {
+            const lerp_place *p = &a->car[i], *q = &b->car[i];
+            if (lerp_far(q->x - p->x, q->y - p->y, q->z - p->z)) continue;
+            lerp_place_mix(&mix.car[i], p, q, k);
+            if (g_car[i].pose) lerp_pose_mix(&mix.pose[i], &a->pose[i], &b->pose[i], k);
+        }
+    if (!lerp_far(b->pc[0] - a->pc[0], b->pc[1] - a->pc[1], b->pc[2] - a->pc[2])) {
+        for (int j = 0; j < 3; j++) mix.pc[j] = lerp_f(a->pc[j], b->pc[j], k);
+        for (int j = 3; j < 7; j++) mix.pc[j] = lerp_a(a->pc[j], b->pc[j], k);
+        for (int j = 0; j < 3; j++) mix.chase[j] = lerp_a(a->chase[j], b->chase[j], k);
+        mix.chase[3] = lerp_f(a->chase[3], b->chase[3], k);
+        if (a->swoop_on && b->swoop_on) {
+            for (int j = 0; j < 3; j++) mix.swoop[j] = lerp_f(a->swoop[j], b->swoop[j], k);
+            for (int j = 3; j < 6; j++) mix.swoop[j] = lerp_a(a->swoop[j], b->swoop[j], k);
+        }
+    }
+    const camera *ca = &a->intro, *cb = &b->intro;
+    if (!lerp_far(cb->x - ca->x, cb->y - ca->y, cb->z - ca->z) && fabsf(wrap_pi(cb->yaw - ca->yaw)) < 0.5f) {
+        mix.intro.x = lerp_f(ca->x, cb->x, k); mix.intro.y = lerp_f(ca->y, cb->y, k); mix.intro.z = lerp_f(ca->z, cb->z, k);
+        mix.intro.yaw = lerp_a(ca->yaw, cb->yaw, k); mix.intro.pitch = lerp_a(ca->pitch, cb->pitch, k);
+        mix.intro.roll = lerp_a(ca->roll, cb->roll, k);
+    }
+    lerp_put(&mix);
+    return 1;
+}
+
+static void lerp_undo(int applied)
+{
+    if (applied) lerp_put(&g_lerp_now);
+}
+
 static int session(int argc, char **argv)
 {
     g_argv = argv; g_argc = argc;
@@ -12358,7 +12497,7 @@ static int session(int argc, char **argv)
         last = frame_began;
         if (dt > 0.1f) dt = 0.1f;
 
-        int new_mode = -1, jump = 0, hop = 0;
+        int new_mode = -1, jump = 0, hop = 0, lerped = 0;
         /*
          * OS_DEMO=<frames>: a headless self-test of WALK.  Walks forward from
          * the start for that many 1/60 s frames (jumping once), prints how far
@@ -12386,12 +12525,15 @@ static int session(int argc, char **argv)
             if (vc_frame < 0) sscanf(getenv("OS_VIEWCHANGE"), "%d,%d", &vc_frame, &vc_view);
             if (vc_now++ == vc_frame) view_change(vc_view);
         }
-        if (ddemo) dt = 1.0f / 50.0f;
+        /* (OS_DEMO_HZ=n: the robot's pictures n a second, drawn between the steps) */
+        if (ddemo) dt = getenv("OS_DEMO_HZ") ? 1.0f / (float)atof(getenv("OS_DEMO_HZ")) : 1.0f / 50.0f;
         /* OS_BENCH=1: time stands still -- the same picture (the grid) over and
            over, for measuring how long a picture takes */
         { static int bench = -1, pictures; if (bench < 0) bench = getenv("OS_BENCH") ? atoi(getenv("OS_BENCH")) : 0;
           if (bench && ++pictures >= bench) { dt = 0.0f; g_fade_in = 1.0f; }      /* (OS_BENCH=n: from the n-th picture on, */
           else if (bench) dt = 1.0f / 60.0f; }                                       /*  each before it 1/60 s: the same place every time) */
+        /* the tests' fixed steps draw each step as it is (lerp_apply) */
+        g_lerp_on = (!ddemo || getenv("OS_DEMO_HZ")) && !demo && !getenv("OS_BENCH") && !shot && !getenv("OS_NOLERP");
         if (demo) {
             dt = 1.0f / 60.0f;
             if (demo_frame == 0) new_mode = WALK;
@@ -12741,6 +12883,7 @@ static int session(int argc, char **argv)
             if (g_dialog || g_cd.on) phys_acc = 0.0f;       /* the question, and the CD player, are over a still picture */
             while (phys_acc >= DRIVE_DT) {
                 phys_acc -= DRIVE_DT;
+                lerp_keep();
                 if (g_intro) {                   /* 0x2780c: only the others, the scenery and the credits */
                     g_race_clock += DRIVE_DT;
                     g_race_on = (g_race_clock >= RACE_HOLD);
@@ -12838,8 +12981,12 @@ static int session(int argc, char **argv)
                 wheels_step(&g_ppose, g_pc.speed,
                             g_pc.steer_max > 0.0f ? g_pc.steer / g_pc.steer_max : 0.0f, DRIVE_DT);
             }
+            lerped = lerp_apply(g_dialog || g_cd.on ? 1.0f : phys_acc / DRIVE_DT);
             chase_camera(&cam);
             if (g_intro && g_in.cam_ok) { cam = g_in.view; g_hide = g_pobj; g_vh = FB_H; }
+            if (getenv("OS_LERPLOG") && g_pobj)
+                printf("lerp %d %.3f cam %.2f %.2f %.2f %.5f car %.2f %.2f %.2f %.5f\n", lerped, phys_acc / DRIVE_DT,
+                       cam.x, cam.y, cam.z, cam.yaw, g_pobj->x, g_pobj->y, g_pobj->z, g_pobj->yaw);
             /* the race is over: the game's trackside camera, the car in view */
             if ((g_finished || g_game_over || (g_replay && g_rpl_view < 0)) && !getenv("OS_NOTRACKSIDE")
                 && trackside_camera(&cam)) {
@@ -12932,6 +13079,7 @@ static int session(int argc, char **argv)
         mesh_animate_all(g_anim_clock);
         smoke_dump();
         s2_render(&view, &sk);
+        lerp_undo(lerped);
         /* the trackside view has no instruments (overlay 0 in the view table) */
         /* 0x1ffec: the whole picture is turned over before the instruments go on */
         if (g_cheat & 0x10)

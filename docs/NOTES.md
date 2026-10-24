@@ -873,6 +873,19 @@ grip of the surface underneath; `+0x194 + 0x54*n` the four wheels.
 - frame time `0x18e00`, clamped to 0.02..0.2 s; smoothing is
   `v = (v - target) * damp[i] + target` with `damp[fps][i] = pow(0.5 + i*0.005, 50/(fps+1))`
   (table built at `0x1571c`, pointer at `0xcf04`). The port steps at a fixed 50 Hz.
+  **The picture between two steps** (the port's own, 2026-10-24: `lerp_keep` / `lerp_apply` /
+  `lerp_undo` in `main.c`): before each step the race's moving state is kept -- every object
+  of `g_car` (place, angles, `car_pose`), the player's place, the chase camera, the
+  fly-across, the intro's camera -- and each picture is drawn from the mix of that and the
+  state after the step, by `phys_acc / DRIVE_DT`. One step (20 ms) behind, but even on any
+  screen; the steps themselves do not see it. Not mixed: what moved more than 1500 units in
+  the step (a reset, a respawn, a puff that starts), a wheel turning more than 1.5 rad a step
+  (its blur shows then), the first picture after a view change, the still picture under the
+  question / CD player. Off for the tests' fixed steps (`OS_DRIVE_DEMO`, `OS_BENCH`, `--shot`)
+  and with `OS_NOLERP=1`; `OS_DEMO_HZ=120` gives the robot 120 pictures a second (mixed),
+  `OS_LERPLOG=1` prints the camera and the car of each picture. Measured at 120 Hz on track 1:
+  without it 700 of 1200 pictures do not move, with it every picture moves by 63 +- 0.2 units.
+  Screamer 2's race (25 steps a second, `s2_race_step`) is not mixed yet.
 - **engine** (`0x18da0`): engine locked to the wheels, `rpm = ratio[gear] * speed *
   (maxrpm/maxspd * 0.02223)`; throttle adds `accel * pull[gear] * curve` rpm/s, pull =
   5, 3.5, 2, 0.95, 0.78, 0.72 and curve a half-sine peaking mid-range of the gear;

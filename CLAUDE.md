@@ -273,7 +273,8 @@ By necessity: depth-buffer renderer, SDL mixer and pan law, the 3.2 kHz output f
 effects, chip loudness against effects (2.6 × `OS_MUSICVOL`), 50 Hz step, save formats,
 the CD player's stand-in songs. By decision: heading snap; the wall put-back (30 units
 INSIDE the line, never outwards); ULTRA detail; hi-res layout = low doubled; BACKSPACE;
-developer mode; one-second loading hold; controller layout; rumble.
+developer mode; one-second loading hold; controller layout; rumble; the picture drawn between two
+50 Hz steps (`lerp_apply`, one step behind; NOTES §8 "The model"; `OS_NOLERP`, `OS_DEMO_HZ`, `OS_LERPLOG`).
 
 ## Open
 
