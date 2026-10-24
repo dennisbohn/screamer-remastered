@@ -96,13 +96,18 @@ at fb's own size too (OS_RES=svga), with the flat things over it as for M3.
   (`rows_fit`; a darkening a factor alone), so nothing brings the palette's steps back into a
   smooth texture. The strength texels of smoke, shadows and glass are mixed four round the
   place, each through its own row's line.
-- **MSAA: the exact way, once for each sample.** The shaders take the sample's place instead of
-  the pixel's middle (`gl_SamplePosition`): planes, texel, depth (`gl_FragDepth`), the keyed
-  holes, the car's block order (stencil), pass 1's `depth_keep` and `SMG` -- all per sample, so
-  ties and carpets come out as in the exact way, and cut-out edges (trees, fences) are smoothed
-  too. The picture is the mean of a pixel's samples (each through the shown palette, or its
-  colour with FILTERING); fb is read back from each pixel's first sample. With MSAA no face is
-  left out for being between two pixels' middles (`cull_set`): a sample may lie in it.
+- **MSAA: shaded once a pixel, covered per sample** (since 2026-10-24; before, every sample was
+  shaded on its own, eight times the work at 8X: 14 ms a picture at 2880 x 2160, now 3). The
+  solid faces and the backdrop are worked out at the pixel's middle, as without MSAA -- planes,
+  texel, depth (`gl_FragDepth`), ties and carpets -- and written to the samples the face covers.
+  A keyed texture's edge (trees, fences, the gantries' struts) covers as many samples as its four
+  texels round the place are not holes, sharpened to one screen pixel (`fwidth`), the samples
+  turned round from pixel to pixel: alpha to coverage, `gl_SampleMask` always written (else it is
+  undefined: the faces left samples of the last picture behind). Pass 1 (`depth_keep`, `SMG`)
+  still works per sample on what is under it. The picture is the mean of a pixel's samples
+  (each through the shown palette, or its colour with FILTERING); fb is read back from each
+  pixel's first sample. With MSAA no face is left out for being between two pixels' middles
+  (`cull_set`): a sample may lie in it.
 - **Safety.** FILTERING and MSAA have their own OpenGL functions and shaders: anything missing
   and only they are not there. No room for the targets: fewer samples, then none. A start that
   dies with either on (the mark in `screamer-remastered.cfg`) turns them off, not the card.
@@ -161,6 +166,8 @@ What still differs from the software renderer, by design:
   it, at its scene's size (`..._hi.ppm`).
 - `OS_NOBLOCKORDER=1`: a car's blocks by depth alone, in both renderers.
 - `OS_FILTER=0|1`, `OS_MSAA=0|2|4|8`: FILTERING and MSAA for one run, over the setting.
+- `OS_GPUTIME=1`: the card's own time for the backdrop, the faces, the read-back and showing the
+  picture, the mean of 120 pictures (timestamp queries).
 - `OS_GPUPUFFS=1`: the scenes with smoke in them (how many of the puffs' triangles).
 
 On Windows 11 with an RX 9070 XT (2026-10-23):
@@ -193,5 +200,8 @@ On Windows 11 with an RX 9070 XT (2026-10-23):
   fences, smoke at the start, the radar's window, the start banner, the sky, the menu's cubes,
   the intro's cards, the mirror cheat, SVGA at 1x. Time for a picture at 2880 x 2160 (robot's
   race, track 1, no vsync, the port's work with the card's wait): both off 2.1 ms, FILTERING
-  2.2, MSAA 2X 3.3, 4X 5.5, 8X 11.4, FILTERING with 4X 6.7, with 8X 14.0. The textures' colour
-  layers take about 190 MB, MSAA 8X's targets at that size about 0.9 GB.
+  2.2, MSAA 2X 3.3, 4X 5.5, 8X 11.4, FILTERING with 4X 6.7, with 8X 14.0 (each sample shaded);
+  once a pixel (2026-10-24): FILTERING with 2X 2.5, 4X 3.2, 8X 3.0. The card's own times
+  (`OS_GPUTIME`), both off: backdrop 0.24, faces 0.32, read back 0.77, shown 0.04 ms -- the
+  read-back is the most of it. The textures' colour layers take about 190 MB, MSAA 8X's targets
+  at that size about 0.9 GB.

@@ -5,7 +5,8 @@
  * fills the window 4:3 with bars, nearest pixel, as SDL_RenderSetLogicalSize(960, 720).
  * M2: the 3D scene drawn here instead of by raster_job, from the same triangle list.
  * M3: that scene at any size (the window's), and the flat things in fb laid over it when shown;
- * FILTERING (the scene in colour too, its textures filtered) and MSAA (the exact way per sample).
+ * FILTERING (the scene in colour too, its textures filtered) and MSAA (shaded once a pixel, keyed
+ * edges by alpha to coverage).
  * OpenGL 4.5 core, its functions from SDL_GL_GetProcAddress: nothing to link; without it the
  * software way shows the pictures.  The state outlives the parts (os_slot 11, os_keep_calloc).
  */
@@ -93,6 +94,9 @@
 /* M3: those only FILTERING and MSAA use -- one missing, and only they are not there */
 #define GPU_GL_COLOUR(X) \
     X(void, GetIntegerv, (GLenum, GLint *)) \
+    X(void, GenQueries, (GLsizei, GLuint *)) \
+    X(void, QueryCounter, (GLuint, GLenum)) \
+    X(void, GetQueryObjectui64v, (GLuint, GLenum, uint64_t *)) \
     X(void, GetFloatv, (GLenum, GLfloat *)) \
     X(void, ColorMaski, (GLuint, GLboolean, GLboolean, GLboolean, GLboolean)) \
     X(void, GenSamplers, (GLsizei, GLuint *)) \
@@ -277,11 +281,7 @@ static const char *const g_scene_vertex_src =
     "layout(binding = 0) uniform usamplerBuffer mlb;\n" \
     "uniform vec2 u_factor;\n" \
     "flat in int f_tri;\n" \
-    "#ifdef MS\n" \
-    "#define AT ((floor(gl_FragCoord.xy) + gl_SamplePosition) / u_factor)\n" \
-    "#else\n" \
     "#define AT (gl_FragCoord.xy / u_factor)\n" \
-    "#endif\n" \
     "tri_rec t;\n" \
     "float iz;\n" \
     "vec2 at, uv;\n" \
@@ -294,9 +294,7 @@ static const char *const g_scene_vertex_src =
     "    precise float rz = 1.0 / z;\n" \
     "    precise float u = uz * rz, v = vz * rz;\n" \
     "    iz = z;\n" \
-    "#ifdef RGB\n" \
     "    uv = vec2(u, v);\n" \
-    "#endif\n" \
     "    if (t.colour >= 0) return uint(t.colour);\n" \
     "    int tu = int(u * 65536.0) >> 16, tv = int(v * 65536.0) >> 16;\n" \
     "    if ((t.kind & 4) != 0) { tu &= t.wrap; tv &= t.wrap; }\n" \
@@ -305,7 +303,7 @@ static const char *const g_scene_vertex_src =
     "    if (o >= t.avail) return 256u;\n" \
     "    return texelFetch(mlb, t.offset + o).r;\n" \
     "}\n" \
-    "#ifdef RGB\n" \
+    "#if defined(RGB) || defined(MS)\n" \
     "uint fetch(int tu, int tv) {\n" \
     "    if ((t.kind & 4) != 0) { tu &= t.wrap; tv &= t.wrap; }\n" \
     "    else { tu = clamp(tu, 0, 255); tv = clamp(tv, 0, 255); }\n" \
@@ -316,7 +314,7 @@ static const char *const g_scene_vertex_src =
 
 /* pass 0, everything solid: palette number, the software's depth, the owner.  M3, FILTERING (RGB):
    the colour too, first -- the frame's colour layer filtered at the texel's place, its steps per
-   card pixel from the planes (u = uz / z), a sample's share of them with MSAA; a keyed texture's
+   card pixel from the planes (u = uz / z), once a pixel with MSAA too; a keyed texture's
    holes by its level 0 (thin things stay thin far off) */
 static const char *const g_scene0_src =
     GPU_TEXEL_SRC
@@ -337,8 +335,32 @@ static const char *const g_scene0_src =
     "#endif\n"
     "void main() {\n"
     "    uint n = texel();\n"
+    "#ifdef MS\n"                                        /* a keyed texture's edge: as many samples as it covers */
+    "    bool a2c = (t.kind & 1) != 0 && t.colour < 0;\n"
+    "    gl_SampleMask[0] = gl_SampleMaskIn[0];\n"             /* (written in every case: else it is undefined) */
+    "    if (a2c) {\n"
+    "        vec2 f = uv - 0.5, w = fract(f);\n"
+    "        ivec2 q = ivec2(floor(f));\n"
+    "        float a = 0.0, best = -1.0;\n"
+    "        uint near = n;\n"
+    "        for (int k = 0; k < 4; k++) {\n"
+    "            uint m = fetch(q.x + (k & 1), q.y + (k >> 1));\n"
+    "            float wk = ((k & 1) != 0 ? w.x : 1.0 - w.x) * ((k >> 1) != 0 ? w.y : 1.0 - w.y);\n"
+    "            if (m != 0u && m != 256u) { a += wk; if (wk > best) { best = wk; near = m; } }\n"
+    "        }\n"
+    "        float e = clamp((a - 0.5) / max(fwidth(a), 1e-3) + 0.5, 0.0, 1.0);\n"
+    "        int ns = gl_NumSamples, k = int(e * float(ns) + 0.5);\n"
+    "        if (k <= 0 || n == 256u) discard;\n"
+    "        if (n == 0u) n = near;\n"
+    "        int r = (int(gl_FragCoord.x) * 3 + int(gl_FragCoord.y) * 5) % ns;\n"
+    "        uint all = (1u << uint(ns)) - 1u, bits = k >= ns ? all : (1u << uint(k)) - 1u;\n"
+    "        gl_SampleMask[0] = int(((bits << uint(r)) | (bits >> uint(ns - r))) & all) & gl_SampleMaskIn[0];\n"
+    "    }\n"
+    "#else\n"
+    "    const bool a2c = false;\n"
+    "#endif\n"
     "#ifdef RGB\n"
-    "    bool keyed = (t.kind & 1) != 0, drop = n == 256u || (keyed && n == 0u);\n"
+    "    bool keyed = (t.kind & 1) != 0, drop = n == 256u || (keyed && n == 0u && !a2c);\n"
     "    vec4 c = vec4(texelFetch(pal, ivec2(int(min(n, 255u)), 0), 0).rgb, 1.0);\n"
     "    if (t.colour < 0 && t.layer >= 0) {\n"
     "        float rz = 1.0 / iz;\n"
@@ -348,7 +370,7 @@ static const char *const g_scene0_src =
     "        vec4 s = (t.kind & 4) != 0 ? textureGrad(frames_wrap, p, gx, gy) : textureGrad(frames, p, gx, gy);\n"
     "        if (keyed) {\n"
     "            vec4 s0 = textureLod(frames, p, 0.0);\n"
-    "            drop = n == 256u || s0.a < 0.5;\n"
+    "            drop = n == 256u || (s0.a < 0.5 && !a2c);\n"
     "            if (s.a < 1.0 / 255.0) s = s0;\n"
     "            if (n == 0u) {\n"                          /* a hole's place kept: the nearest of the four texels that is none */
     "                vec2 f = uv - 0.5, w = fract(f);\n"
@@ -366,7 +388,7 @@ static const char *const g_scene0_src =
     "    if (drop) discard;\n"
     "    o_colour = c; o_index = n; o_zsw = iz * t.zbias; o_id = t.id;\n"
     "#else\n"
-    "    if (n == 256u || ((t.kind & 1) != 0 && n == 0u)) discard;\n"
+    "    if (n == 256u || ((t.kind & 1) != 0 && n == 0u && !a2c)) discard;\n"
     "    o_index = n; o_zsw = iz * t.zbias; o_id = t.id;\n"
     "#endif\n"
     "    gl_FragDepth = iz * t.hw * 8.0;\n"
@@ -455,7 +477,7 @@ static const char *const g_scene1_src =
 
 /* M3: the scene's backdrop first, at the card's size: fb's picture (mode 0), the sky as sky_paint
    lays it, at the pixel's corner in fb's pixels (1), or one colour (2).  FILTERING: the palette's
-   colours too, the sky's four texels round its place mixed; MSAA: once a sample */
+   colours too, the sky's four texels round its place mixed; MSAA: once a pixel too */
 static const char *const g_back_src =
     "layout(binding = 0) uniform usampler2D source;\n"
     "uniform int u_mode;\n"
@@ -463,11 +485,7 @@ static const char *const g_back_src =
     "uniform vec4 u_sky0;\n"            /* off, cos and sin of the roll, picture columns to one of the backdrop's */
     "uniform vec4 u_sky1;\n"            /* rows to one, the eye row, the backdrop's top, fb's width */
     "uniform ivec4 u_sky2;\n"           /* the backdrop's width and height, the ground's colour, the clear one */
-    "#ifdef MS\n"
-    "#define AT (floor(gl_FragCoord.xy) + gl_SamplePosition)\n"
-    "#else\n"
     "#define AT gl_FragCoord.xy\n"
-    "#endif\n"
     "#ifdef RGB\n"
     GPU_LIGHT_SRC
     "layout(binding = 1) uniform sampler2D pal;\n"
@@ -939,6 +957,36 @@ void gpu_fades(float fade, uint32_t to, float to_k)
     G->fade = fade; G->to = to; G->to_k = to_k;
 }
 
+/* a test, OS_GPUTIME=1: the card's clock at each mark of a picture (0 the scene begins, 1 its
+   backdrop is done, 2 its faces, 3 read back; 4 the picture shown begins, 5 shown), and every 120
+   pictures the means of the parts, in ms */
+#ifndef GL_TIMESTAMP
+#define GL_TIMESTAMP 0x8E28
+#endif
+#ifndef GL_QUERY_RESULT
+#define GL_QUERY_RESULT 0x8866
+#endif
+static GLuint g_tq[6];
+static int g_tq_on = -1, g_tq_n;
+static double g_tq_sum[5];
+static void gpu_mark(int k)
+{
+    if (g_tq_on < 0) g_tq_on = getenv("OS_GPUTIME") != NULL;
+    if (!g_tq_on) return;
+    if (!g_tq[0]) G->GenQueries(6, g_tq);
+    G->QueryCounter(g_tq[k], GL_TIMESTAMP);
+    if (k != 5) return;
+    uint64_t at[6];
+    for (int i = 0; i < 6; i++) G->GetQueryObjectui64v(g_tq[i], GL_QUERY_RESULT, &at[i]);
+    for (int i = 0; i < 5; i++) if (i != 3) g_tq_sum[i] += (double)(at[i + 1] - at[i]) * 1e-6;
+    if (++g_tq_n == 120) {
+        printf("gpu time: backdrop %.2f, faces %.2f, read back %.2f, shown %.2f ms\n", g_tq_sum[0] / 120, g_tq_sum[1] / 120,
+               g_tq_sum[2] / 120, g_tq_sum[4] / 120);
+        fflush(stdout);
+        g_tq_n = 0; memset(g_tq_sum, 0, sizeof g_tq_sum);
+    }
+}
+
 void gpu_present(void)
 {
     if (!gpu()) return;
@@ -949,12 +997,14 @@ void gpu_present(void)
     G->Viewport(0, 0, dw, dh);
     G->ClearColor(0.0f, 0.0f, 0.0f, 1.0f);
     G->Clear(GL_COLOR_BUFFER_BIT);
-    gpu_area(&w, &h);                   /* 4:3, as large as it fits, in the middle */
+    gpu_area(&w, &h);                   /* the picture's shape, as large as it fits, in the middle */
+    if (g_tq_on > 0 && g_tq[0]) gpu_mark(4);
     if (G->pic_w > 0 && w > 0 && h > 0) {
         if (G->scene_card && G->overlay_ok && G->pic_w == G->layer_w && G->pic_h == G->layer_h)
             draw_mixed((dw - w) / 2, (dh - h) / 2, w, h);
         else draw((dw - w) / 2, (dh - h) / 2, w, h);
     }
+    if (g_tq_on > 0 && g_tq[0]) gpu_mark(5);
     G->last_card = G->scene_card; G->last_overlay = G->overlay_ok;
     G->scene_card = G->overlay_ok = 0;
     SDL_GL_SwapWindow(G->win);
@@ -1628,6 +1678,7 @@ int gpu_scene(const gpu_view *v, const gpu_tri *t, int n, uint8_t *fb, float *zb
     }
 
     /* the backdrop, and nothing in front of it yet */
+    gpu_mark(0);
     if (!big && vk == 0) {
         G->BindTexture(GL_TEXTURE_2D, G->t_index);
         G->TexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, w, h, GL_RED_INTEGER, GL_UNSIGNED_BYTE, fb);
@@ -1678,6 +1729,7 @@ int gpu_scene(const gpu_view *v, const gpu_tri *t, int n, uint8_t *fb, float *zb
         G->TextureBarrier();                        /* (pass 1 reads what the backdrop wrote: the menu's lists may begin with it) */
     }
 
+    gpu_mark(1);
     /* the runs of solid and see-through faces in the list's order (a race: all solid ones first,
        render_scene's two passes; the menu: an object's own after each other) */
     for (int i = 0; i < m; ) {
@@ -1689,6 +1741,7 @@ int gpu_scene(const gpu_view *v, const gpu_tri *t, int n, uint8_t *fb, float *zb
         i = j;
     }
 
+    gpu_mark(2);
     /* back to fb, zb and idb (a scene drawn larger: through targets of fb's size, each pixel
        as it is at the middle of fb's; FILTERING: the number, depth and owner are the colour's
        next three; MSAA: the first sample of each) */
@@ -1730,6 +1783,7 @@ int gpu_scene(const gpu_view *v, const gpu_tri *t, int n, uint8_t *fb, float *zb
     G->ReadPixels(0, 0, w, h, GL_RED, GL_FLOAT, zb);
     G->ReadBuffer(from + 2);
     G->ReadPixels(0, 0, w, h, GL_RED_INTEGER, GL_SHORT, idb);
+    gpu_mark(3);
     G->BindFramebuffer(GL_FRAMEBUFFER, 0);
     G->BindVertexArray(0);
     {
