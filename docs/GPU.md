@@ -53,10 +53,11 @@ Every change shows at once. How a larger scene is drawn:
 - **fb gets the scene back at its own size**: targets of fb's size, each pixel as the scene is
   at the middle of fb's (a blit, nearest), so that the HUD and everything else works on fb as
   ever.
-- **The flat things over it** (`lay_begin`, `lay_dark`, `lay_end` in main.c): where fb still
-  shows the scene after the HUD is drawn, the card shows its own; where fb shows the scene
-  through a darkening (the radar's window, the dialog, the CD player), the card's scene goes
-  through the same table (`gpu_overlay`: per pixel 0 the scene, 1 fb's colour, 2 + k table k).
+- **The flat things over it** (`lay_begin`, `lay_dark`, `lay_end` in main.c): the routines
+  that put flat pixels down mark them (`LAY_PUT`, `LAY_RUN`); a marked pixel shows fb's colour,
+  any other one the card's scene -- as drawn, or through the darkenings done since (the radar's
+  window, the dialog, the CD player), each a table (`gpu_overlay`: per pixel 0 the scene, 1
+  fb's colour, 2 + k table k). (A pixel fb no longer shows the scene at counts as marked too.)
   The mirror cheats turn the card's scene over as well.
 - **The menu's 3D** (`menu3d_begin`, `menu3d_end`): the letters' cubes and the models, on the
   card when the scene is drawn larger. Its see-through material has no `SMG`: the card gets
