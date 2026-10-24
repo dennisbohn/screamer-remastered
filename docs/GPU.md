@@ -1,7 +1,7 @@
-# The GPU renderer (this fork)
+# The GPU renderer
 
-OpenGL 4.5 via SDL2, in `port/src/gpu.c`. Built when `OS_GPU` is on, which is the CMake default
-everywhere except the MiSTer build, and then it is what draws: the menus' pictures are shown
+OpenGL 4.5 via SDL2, in `port/src/gpu.c`. Built when `OS_GPU` is on, the CMake default, and then
+it is what draws: the menus' pictures are shown
 through the card, a race's 3D scene is drawn on it -- at the window's own size (RES NATIVE),
 and so is the menu's 3D.
 
@@ -33,11 +33,10 @@ OPTIONS has one line GRAPHICS in the place of DETAIL and RESOLUTION; its page ha
 WINDOW / FULLSCREEN and DETAIL, then FILTERING and MSAA (next section):
 
 - **RES NATIVE** (the default): the card draws the scene at the size of the window's 4:3 part,
-  in its own pixels (a 4K screen in full: 2880 x 2160). **RES VGA** and **RES SVGA**: the
-  original's two, 320 x 200 and 640 x 400, for its look -- exactly as before, pixel for pixel.
-  NATIVE and SVGA use the high set's flat artwork, VGA the low set's (a change to or from VGA
-  starts the menu again, as the resolution line did). `resolution=native|svga|vga` in
-  `openscreamer.cfg` (the old `low` is VGA, `high` NATIVE); `-res native|svga|vga`.
+  in its own pixels (a 4K screen in full: 2880 x 2160). **RES SVGA**: STARTH's 640 x 400,
+  exactly as before, pixel for pixel. Both use the high set's flat artwork; 320 x 200 (STARTL,
+  the low set) is gone since 2026-10-24. `resolution=native|svga` in `openscreamer.cfg` (the old
+  `vga` / `low` are read as SVGA, `high` as NATIVE); `-res native|svga`.
 - **WINDOW / FULLSCREEN**: the whole screen as the desktop has it, never another screen mode,
   so that no setting can leave the screen black; F11 the same. `display=window|fullscreen`.
 - **DETAIL**: the game's (and ULTRA), as before.
@@ -73,7 +72,7 @@ Two more lines on the GRAPHICS page, **FILTERING OFF / ON** and **MSAA OFF / 2X 
 look). Every change shows at once, in the menu's cubes too. Without the card the two lines are
 not there; MSAA's line goes as far as the card can. Both off: the pictures are the same as
 before, byte for byte (also the larger ones). With either on, the card's scene is what is shown,
-at fb's own size too (RES VGA / SVGA), with the flat things over it as for M3.
+at fb's own size too (RES SVGA), with the flat things over it as for M3.
 
 - **The palette numbers stay.** The index target keeps exactly what it had (nearest texels,
   `SMG` on numbers): fb is still read back from it for the HUD and the darkenings, and pass 1

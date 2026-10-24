@@ -5220,7 +5220,7 @@ static void FUN_0004189f(void)
  * by which program was started, STARTL or STARTH): ENTER saves the settings and the menu begins
  * again in the other one, on this page (s2m_res_change; main.c s2_menu3d).
  */
-#define S2_RES_ROW 1
+#define S2_RES_ROW 0                   /* (the port's RESOLUTION line: gone with 320 x 200) */
 #define HOOK_420c0
 static void FUN_000420c0(void)
 {

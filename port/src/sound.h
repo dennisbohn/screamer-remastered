@@ -39,10 +39,6 @@ void snd_forget(void);                 /* every sample let go, the device left o
 /* the CD's songs (cdaudio.c): files track_NN.ogg / .mp3 / .wav, or the disc's own image */
 int  snd_cd(int track, int loop);      /* 0 = no file for it; track 0 stops */
 int  snd_cd_track(void);               /* what is playing, 0 none */
-long snd_cd_at(void);                  /* where it is: frames from its start */
-void snd_cd_skip(long frames);         /* on from there */
-long cd_audio_at(void);
-void cd_audio_skip(long frames);
 void snd_cd_volume(float v);           /* the CD's volume, 0..1 (0x4d7c0's 0..255) */
 int  cd_audio_find(int track, char *out, size_t n);
 int  cd_audio_play(int track, int loop, int out_rate);

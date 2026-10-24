@@ -19,7 +19,8 @@ report problems here, not to OpenScreamer.
   detail set, text spacing at 640 x 400, palette colours on Windows
 
 **Planned:** 16:9, high-resolution cockpits, a reorganised options menu, smooth motion for
-*Screamer 2*. The 320 x 200 mode and the MiSTer code will be removed.
+*Screamer 2*. *Screamer 2* is playable as in OpenScreamer, at 640 x 400; the improvements are
+for *Screamer* for now.
 
 ## You need the original games
 

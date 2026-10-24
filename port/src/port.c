@@ -292,10 +292,9 @@ static FILE *packed_open(const char *rel)
  * IS THE GAME ALL THERE?  Asked once, when the program starts.
  *
  * Needed: the sixteen containers of DATA (GEN, LOCAL, MUSIC, SOUND, the six
- * tracks and the six tracks driven the other way) and nine of GFX (GAME,
- * GRAF, MENU and the six tracks' low-resolution pictures).  The six
- * high-resolution containers are wanted too but the game runs without them
- * (it stays in low resolution).  A container counts when it is there, its
+ * tracks and the six tracks driven the other way) and fifteen of GFX (GAME,
+ * GRAF, MENU and the six tracks' two sets of pictures, L and H: DETAIL picks
+ * one).  A container counts when it is there, its
  * list of contents is sound, and EVERY file in it unpacks to the size the
  * list gives -- so a copy cut short or damaged is caught here, not half way
  * through a race.
@@ -354,7 +353,7 @@ static void game_check(void)
                                          "CARS101", "CARS201", "CARS301", "CARS401", NULL };
     static const char *const high2[] = { "MAP1H01", "MAP2H01", "MAP3H01", "MAP4H01", "MAP5H01", "MAP6H01", "MAP7H01", NULL };
     char bad[1200] = "", path[1024], file[32];
-    int files = 0, nbad = 0, hi = 1, packs = 0;
+    int files = 0, nbad = 0, packs = 0;
     printf("OpenScreamer %s\n", OS_VERSION);
     printf("Checking %s data in %s ... ", K->game == 2 ? "Screamer 2" : "Screamer", K->data);
     fflush(stdout);
@@ -373,7 +372,6 @@ static void game_check(void)
                 ok = is_dir(path);
             }
             if (ok) { packs++; continue; }
-            if (set == 2) { hi = 0; continue; }
             size_t at = strlen(bad);
             snprintf(bad + at, sizeof bad - at, "\n  %s/%s%s  %s", set == 0 ? "DATA" : "GFX", list[i],
                      K->packed ? ".DAT" : " (unpacked folder)", what);
@@ -399,7 +397,7 @@ static void game_check(void)
     }
     if (K->packed) printf("OK (%d containers, %d files", packs, files);
     else           printf("OK (unpacked files");
-    printf("%s)\n", hi ? "" : "; no high-resolution files: low resolution only");
+    printf(")\n");
     fflush(stdout);
 }
 
@@ -430,10 +428,8 @@ static void os_help(const char *me)
 "  -game N        1 = Screamer, 2 = Screamer 2.  Default: the one whose files are found\n"
 "                 (./screamer, ./screamer2); both found: a first page chooses (the last\n"
 "                 choice lit); -data DIR names either game's folder\n"
-"  -res vga|svga|native  320 x 200 or 640 x 400 for this run (also low|high; Screamer 2's high\n"
-"                 is STARTH.EXE's), or native: the graphics card draws Screamer's races at the\n"
-"                 window's size; the one kept is RES in Screamer's OPTIONS / GRAPHICS or\n"
-"                 RESOLUTION in Screamer 2's GAME SETTINGS, in openscreamer.cfg\n"
+"  -res svga|native  640 x 400 for this run, or native: the graphics card draws Screamer's races\n"
+"                 at the window's size; the one kept is RES in OPTIONS / GRAPHICS (openscreamer.cfg)\n"
 #ifdef OS_GPU
 "  -renderer gpu|software  who draws the pictures this run: the graphics card (the default,\n"
 "                 if it has OpenGL 4.5) or the program itself (renderer= in openscreamer.cfg;\n"
@@ -450,8 +446,8 @@ static void os_help(const char *me)
 "IN THE MENU\n"
 "  UP / DOWN      choose a line           LEFT / RIGHT  change an option, the car, the track\n"
 "  ENTER          go on                   ESC           back (on the first page: leave)\n"
-"  OPTIONS has: GRAPHICS -- RES (NATIVE: the window's size; VGA 320x200 and SVGA 640x400 as\n"
-"  the original), WINDOW / FULLSCREEN, DETAIL (LOW, MID, HI as the original; ULTRA draws much\n"
+"  OPTIONS has: GRAPHICS -- RES (NATIVE: the window's size; SVGA 640x400 as the original),\n"
+"  WINDOW / FULLSCREEN, DETAIL (LOW, MID, HI as the original; ULTRA draws much\n"
 "  further), FILTERING and MSAA (the graphics card's smoothing; OFF is the original's look) --\n"
 "  then difficulty, laps, speech, music, records.\n"
 "\n"
@@ -563,8 +559,8 @@ void os_init(int argc, char **argv)
         else if (!strcmp(argv[i], "-game") && i + 1 < argc) game = atoi(argv[++i]);
         else if (!strcmp(argv[i], "-res") && i + 1 < argc) {
             i++;
-            const char *r = !strcmp(argv[i], "vga") ? "low" : !strcmp(argv[i], "svga") ? "high" : argv[i];
-            if (!strcmp(r, "high") || !strcmp(r, "low") || !strcmp(r, "native")) setenv("OS_RES", r, 1);
+            const char *r = !strcmp(argv[i], "svga") ? "high" : argv[i];
+            if (!strcmp(r, "high") || !strcmp(r, "native")) setenv("OS_RES", r, 1);
         }
         else if (!strcmp(argv[i], "-renderer") && i + 1 < argc) { i++; if (!strcmp(argv[i], "gpu") || !strcmp(argv[i], "software")) setenv("OS_RENDERER", argv[i], 1); }
         else K->argv[K->argc++] = argv[i];
