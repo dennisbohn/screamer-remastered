@@ -42,12 +42,7 @@
 /* every event loop gets the game controller's buttons as keys (controls.c), and F5 -- the
    frames a second, on every screen -- is taken here (poll_event) */
 static int poll_event(SDL_Event *e);
-#ifdef MISTER_HYBRID
-static void tall_follow(void);          /* MISTER: once a picture, the core's Resolution option */
-#define SDL_PollEvent(e) (tall_follow(), poll_event(e))
-#else
 #define SDL_PollEvent(e) poll_event(e)
-#endif
 
 
 /*
@@ -368,15 +363,8 @@ static int sky_load(sky *s, const char *path)
  */
 static jmp_buf *g_next_part;           /* where os_go() jumps back to: the loop in main() */
 
-#ifdef MISTER_HYBRID
-/* MISTER: "update the texture, clear, copy, present" is one call (show_picture:
-   the picture and its palette to the core, at the next field) */
-#define SDL_RenderClear(r)                ((void)0)
-#define SDL_RenderCopy(r, t, a, b)        ((void)0)
-#define SDL_RenderPresent(r)              ((void)0)
-#endif
 
-#if defined(OS_GPU) && !defined(MISTER_HYBRID)
+#ifdef OS_GPU
 /* THE GPU'S WAY (gpu.c, renderer=gpu): the picture went up in show_pixels, showing it is the
    swap, and SDL's renderer -- there is none then -- is not called */
 #define SDL_RenderClear(r)                (gpu_active() ? 0 : (SDL_RenderClear)(r))
@@ -388,34 +376,16 @@ static void gpu_quality_set(void);
 #endif
 static Uint32 display_flags(void);
 
-/* MISTER: where a picture's time goes, for the log (mister.c).  0 the game's
-   own work is done, 1 sky and clearing, 2 the scene worked out, 5 and filled;
-   then the rest (3). */
-#ifdef MISTER_HYBRID
-#define MISTER_MARK(k) mister_mark(k)
-#else
-#define MISTER_MARK(k) ((void)0)
-#endif
-
 static SDL_Window *sys_window(SDL_Renderer **ren)
 {
     SDL_Window *win = os_slot(0);
     if (!win) {
-#ifdef MISTER_HYBRID
-        SDL_SetHint("SDL_MISTER_VSYNC", "1");            /* MISTER: a picture is shown once a field */
-        SDL_SetHint("SDL_MISTER_VIDEO_FORMAT", "INDEX8"); /* MISTER: and is the palette's numbers (fb) */
-#endif
 #ifdef OS_GPU
         int gpu_wanted = gpu_start_mark(renderer_gpu());
         if (gpu_wanted) gpu_hints();
 #endif
         if (SDL_Init(SDL_INIT_VIDEO) != 0) { fprintf(stderr, "SDL_Init: %s\n", SDL_GetError()); return NULL; }
         /* 4:3, as 320x200 was always meant to be shown; resizable, letterboxed */
-#ifdef MISTER_HYBRID
-        /* MISTER: the window is the core's screen, as big as the picture (its
-           size picks the video mode) */
-        win = SDL_CreateWindow("OpenScreamer", 0, 0, FB_W, FB_H, 0);
-#else
         Uint32 flags = SDL_WINDOW_RESIZABLE | display_flags();
 #ifdef OS_GPU
         if (gpu_wanted) { gpu_attributes(); flags |= gpu_window_flags(); }
@@ -430,13 +400,6 @@ static SDL_Window *sys_window(SDL_Renderer **ren)
                                    960, 720, SDL_WINDOW_RESIZABLE);
         }
 #endif
-#endif
-#ifdef MISTER_HYBRID
-        /* MISTER: no renderer -- the picture goes straight to the window's
-           surface (mister_show(), in the place of SDL_UpdateTexture below) */
-        SDL_Renderer *r = (SDL_Renderer *)win;
-        if (!win) fprintf(stderr, "no picture: %s\n", SDL_GetError());
-#else
 #ifdef OS_GPU
         /* the card shows the pictures (gpu.c); the window stands in for SDL's renderer, which the
            calls to it pass by (the SDL_Render* above) -- or, with no OpenGL, SDL's renderer as ever */
@@ -454,7 +417,6 @@ static SDL_Window *sys_window(SDL_Renderer **ren)
             printf("display: %s, vsync %s\n", info.name,
                    (info.flags & SDL_RENDERER_PRESENTVSYNC) ? "on" : "NOT given by the driver");
         if (r) SDL_RenderSetLogicalSize(r, 960, 720);
-#endif
         os_slot_set(0, win); os_slot_set(1, r);
     }
     if (ren) *ren = os_slot(1);
@@ -463,14 +425,6 @@ static SDL_Window *sys_window(SDL_Renderer **ren)
 
 static SDL_Texture *sys_texture(int w, int h)
 {
-#ifdef MISTER_HYBRID
-    if (os_slot(0)) {                                   /* MISTER: the screen follows the picture's size */
-        int ww = 0, wh = 0;
-        SDL_GetWindowSize(os_slot(0), &ww, &wh);
-        if (ww != w || wh != h) SDL_SetWindowSize(os_slot(0), w, h);
-    }
-    return os_slot(0);                                  /* (there is no texture) */
-#endif
 #ifdef OS_GPU
     if (gpu_active()) return (SDL_Texture *)os_slot(0); /* (a stand-in: the picture goes to the card, gpu_picture) */
 #endif
@@ -486,14 +440,10 @@ static SDL_Texture *sys_texture(int w, int h)
 
 /* the picture (`rows` of fb's width from `pixels`) to the screen, through the palette as shown
    (show_palette); the fades asked for are put back after it.  The PC: through 32 bits into the
-   texture.  MISTER: the numbers and the palette to the core (mister_show). */
+   texture. */
 static void show_pixels(SDL_Texture *tex, const uint8_t *pixels, int rows)
 {
     const uint32_t *const pal = show_palette();
-#ifdef MISTER_HYBRID
-    (void)tex;
-    mister_show(os_slot(0), pixels, pal, FB_W, rows);
-#else
 #ifdef OS_GPU
     if (gpu_active()) {                         /* the numbers and the palette to the card (gpu.c) */
         gpu_fades(g_show_fade, g_show_to, g_show_to_k);
@@ -513,7 +463,6 @@ static void show_pixels(SDL_Texture *tex, const uint8_t *pixels, int rows)
         for (int i = 0; i < FB_W * rows; i++) rgb[i] = pal[pixels[i]];
         SDL_UpdateTexture(tex, NULL, rgb, FB_W * (int)sizeof(uint32_t));
     }
-#endif
     g_show_fade = 1.0f; g_show_to_k = 0.0f;
 }
 #define show_picture(tex) show_pixels((tex), fb, FB_H)
@@ -786,20 +735,11 @@ static void res_init(void)
         for (int k = 0; k < 6; k++) key[k] = g_cfg_key[k];
         controls_init(key);
     }
-#ifdef MISTER_HYBRID
-    /* MISTER: the resolution is the core's OSD option, not the settings file's */
     int wide = 0;
-    if (mister_on()) { g_tall = (mister_res_mode() & 1) ? TALL_ROWS : 0; wide = mister_res_mode() >> 1; }
-#else
-    int wide = 0;
-#endif
     if (getenv("OS_TALL")) g_tall = atoi(getenv("OS_TALL")) ? TALL_ROWS : 0;
     if (getenv("OS_WIDE")) wide = atoi(getenv("OS_WIDE")) != 0;
     const char *rs = getenv("OS_RES");
     int hi = rs ? !strcmp(rs, "high") || !strcmp(rs, "native") : g_cfg.res;
-#ifdef MISTER_HYBRID
-    hi = 0;                                  /* MISTER: there is no high resolution -- the machine cannot fill it */
-#endif
     g_native = hi && (rs ? !strcmp(rs, "native") : g_cfg.native);
     if (hi) { g_tall = 0; wide = 0; }
     if (wide) {
@@ -846,52 +786,6 @@ static void res_init(void)
 static float g_focal_x, g_focal_y;
 static int g_s2m_band;                               /* (Screamer 2's menu in a taller picture: s2_menu3d) */
 static SDL_Texture *g_s2m_tex;                       /* (... and its picture while it runs) */
-#ifdef MISTER_HYBRID
-static int g_in_race;                                /* a race (or the intro) is set up and running */
-static void race_art_load(void);
-/* MISTER: the core's Resolution option is followed at once, wherever the
-   program is (called once a picture, before anything is drawn) */
-static void tall_follow(void)
-{
-    static int quiet = -1;
-    if (quiet < 0) quiet = getenv("OS_TALL") != NULL || getenv("OS_WIDE") != NULL || !mister_on();   /* (a test's fixed size) */
-    if (mister_on()) {                               /* the HUD margins, every picture: a change shows at once */
-        mister_hud_margins(&g_hud_top, &g_hud_bot);
-        mister_menu_mask(quiet ? g_tall || g_s2m_band : mister_res_mode() & 1, os_game());
-    }
-    if (quiet || !fb || (g_s == 2 && g_yd == 1)) return;
-    const int tall = (mister_res_mode() & 1) ? TALL_ROWS : 0;
-    const int wide = mister_res_mode() >> 1;
-    if (g_s2m_tex && wide == (g_yd == 2)) {          /* Screamer 2's menu: only the black rows round it */
-        if (tall / 2 != g_s2m_band) { mister_show_wait(); g_s2m_band = tall / 2; g_s2m_tex = sys_texture(FB_W, FB_H + 2 * g_s2m_band); }
-        return;
-    }
-    if (tall == g_tall && wide == (g_yd == 2)) return;
-    mister_show_wait();                              /* (the last picture may still be on its way out) */
-    if (wide != (g_yd == 2)) {
-        /* the width is another set of artwork: the menu begins again in it,
-           a race loads its flat pictures again and goes on */
-        if (!g_in_race) {
-            if (g_argv && g_next_part)
-                os_go(g_argc, g_argc > 1 ? g_argv[1] : NULL, g_argc > 2 ? g_argv[2] : NULL);
-            return;
-        }
-        if (wide && !os_exists(os_game() == 2 ? "build/dec/GAME1/GAMEH.FNT" : "build/dec/GAME/GAMEH.FNT")) return;
-        g_s = wide ? 2 : 1; g_yd = wide ? 2 : 1;
-        FB_W = 320 * g_s; FB_H = 200 + g_tall;
-        g_clip[1] = FB_W;
-        g_focal_x = GAME_FOCAL * (float)g_s; g_focal_y = GAME_FOCAL * (float)SY;
-        race_art_load();
-    }
-    FB_H += tall - g_tall;
-    g_tall = tall;
-    LAY_MID();
-    g_vh = FB_H; g_cy = EYE_LINE * (float)FB_H;
-    g_clip[3] = FB_H;
-    { const uint8_t black = pal_near(0); for (int i = 0; i < FB_W * FB_H; i++) { fb[i] = black; zb[i] = 0.0f; idb[i] = -1; } }
-    sys_texture(FB_W, FB_H);                         /* the window's size is the core's video mode */
-}
-#endif
 
 /* a whole-screen picture (200 rows) put in the middle of the screen */
 static void pic_put(const uint8_t *pic, int scene)
@@ -1537,9 +1431,6 @@ static void raster_job(const tri_job *j, int rows, int counted)      /* rows: bi
         const int c1 = fmaxx - 0.5f >= (float)maxx ? maxx : ifloor(fmaxx - 0.5f);
         if (c0 > c1) return;
     }
-#ifdef MISTER_HYBRID
-    if (counted) mister_tris++; else mister_helper_cnt[0]++;
-#endif
     const float ia = j->ia, ib = j->ib, ic = j->ic;
     float inv = 1.0f / area;
     const int keyed = (m->type == 64);
@@ -1604,10 +1495,6 @@ static void raster_job(const tri_job *j, int rows, int counted)      /* rows: bi
         if (!(xa <= (float)maxx && xb >= (float)minx)) continue;
         const int xs = xa <= (float)minx ? minx : iceil(xa), xe = xb >= (float)maxx ? maxx : ifloor(xb);
         if (xs > xe) continue;
-#ifdef MISTER_HYBRID
-        if (counted) { mister_pixels += xe - xs + 1; mister_rows++; }    /* MISTER: for the speed line of the log */
-        else { mister_helper_cnt[2] += xe - xs + 1; mister_helper_cnt[1]++; }
-#endif
         const float fx = (float)xs + 0.5f - ax, fy = py - ay;
         float iz = ia + fx * diz + fy * dizy;
         float uz = ua + fx * duz + fy * duzy, vz = va + fx * dvz + fy * dvzy;
@@ -1822,7 +1709,6 @@ typedef struct {
        depths (it has nothing else to do while the first triangles are being
        worked out): 1 = asked for, 2 = done */
     SDL_atomic_t before;
-    SDL_atomic_t show;                   /* MISTER: a finished picture to hand over first (mister_show_later) */
     float yaw, pitch, roll, focal_x, focal_y;
     const sky *backdrop;
 } tri_helper;
@@ -1886,14 +1772,8 @@ static int lanes_done(tri_helper *h)
 static int tri_helper_run(void *arg)
 {
     tri_helper *h = arg;
-#ifdef MISTER_HYBRID
-    mister_second_cpu();
-#endif
     for (;;) {
         SDL_SemWait(h->wake);
-#ifdef MISTER_HYBRID
-        if (SDL_AtomicGet(&h->show)) { mister_show_job(); SDL_AtomicSet(&h->show, 0); }
-#endif
         if (!SDL_AtomicGet(&h->busy)) continue;
         Uint64 t0_ = SDL_GetPerformanceCounter();
         if (SDL_AtomicGet(&h->before) == 1) {
@@ -1942,19 +1822,12 @@ static void raster_flush(void)
         return;
     }
     if (!SDL_AtomicGet(&h->busy)) return;                /* nothing was listed, nothing asked for */
-#ifdef MISTER_HYBRID
-    mister_stat[0] += g_tri_n; for (int k = 0; k < g_lanes; k++) mister_stat[1] += SDL_AtomicGet(&h->at[k]) * 8 / g_lanes;
-    mister_stat[2] += SDL_AtomicGet(&h->before) == 1;
-#endif
     SDL_AtomicSet(&h->listed, g_tri_n);
     SDL_AtomicSet(&h->closed, 1);
     SDL_SemPost(h->wake);
     while (SDL_AtomicGet(&h->before) == 1) SDL_CPUPauseInstruction();
     while (!lanes_done(h))
         if (!lane_work(h, 1, (g_lanes + 1) / 2)) { SDL_CPUPauseInstruction();
-#ifdef MISTER_HYBRID
-            mister_stat[3]++;
-#endif
         }
     SDL_SemWait(h->done);
     g_tri_n = 0;
@@ -2842,7 +2715,6 @@ static void render_scene(const camera *cam, const sky *s)
         g_anim_clock = (int)(atof(getenv("OS_ANIMCLOCK")) * 65535.0);
         mesh_animate_all(g_anim_clock);
     }
-    MISTER_MARK(0);
 #ifdef OS_GPU
     /* M2: Screamer's scene on the card (OS_GPU3D=0: still raster_job, for comparing) */
     if (gpu_active() && os_game() == 1 && g_scene && g_mlb && g_have_smg && g_fog <= 0.0f && !g_fade_on &&
@@ -2877,7 +2749,6 @@ static void render_scene(const camera *cam, const sky *s)
         } else
             frame_clear(cam->yaw, cam->pitch, cam->roll, s, g_focal_x, g_focal_y);
     }
-    MISTER_MARK(1);
     view_setup(cam);
     if (!g_scene) { raster_flush(); return; }
     g_tri_listing = 1;
@@ -2912,7 +2783,6 @@ static void render_scene(const camera *cam, const sky *s)
             if (&g_car[k] != g_hide)
                 draw_object(&g_car[k], g_scene->count + k, pass, cam);
     }
-    MISTER_MARK(2);
 #ifdef OS_GPU
     if (g_gpu_scene) {
         /* (the backdrop for a scene drawn larger: sky_paint's numbers) */
@@ -2939,7 +2809,6 @@ static void render_scene(const camera *cam, const sky *s)
     raster_flush();
     g_tri_listing = 0;
     if (g_show_edges) draw_guides();
-    MISTER_MARK(5);
 }
 
 static void s2_env_slide(const camera *cam);
@@ -2951,32 +2820,7 @@ static void render_frame(const camera *cam, const sky *s)
         g_uv_run = r && atoi(r) >= 1 && atoi(r) <= 8 ? atoi(r) : 8;
     }
     if (os_game() == 2) { s2_dark_make(); s2_env_slide(cam); }
-#ifdef MISTER_HYBRID
-    /*
-     * MISTER: HOW FAR IS DRAWN FOLLOWS THE TIME THERE IS.  A picture has one
-     * field, 16.7 ms; one that takes longer is shown a whole field late.  So
-     * when the last picture took nearly all of it the far plane (the game's
-     * DETAIL setting, section 30 of CLAUDE.md) comes a little nearer, and
-     * when there is time to spare it goes back out -- never nearer than the
-     * game's own MID and LOW, 27808, and never further than what is set.
-     * OFF since 2026-10-12 (Danik: things at the far plane came and went
-     * while the speed was on the edge); OS_ADAPTFAR=1 tries it.
-     */
-    static float reach = 1.0f;
-    const float set = g_far_z;
-    if (set > 27808.0f && getenv("OS_ADAPTFAR")) {
-        const float took = mister_last_work();
-        if (took > 14.6f) reach -= 0.02f;
-        else if (took > 0.0f && took < 13.4f) reach += 0.005f;
-        if (reach > 1.0f) reach = 1.0f;
-        if (reach * set < 27808.0f) reach = 27808.0f / set;
-        g_far_z = set * reach;
-    }
     render_scene(cam, s);
-    g_far_z = set;
-#else
-    render_scene(cam, s);
-#endif
 }
 
 /*
@@ -4375,9 +4219,6 @@ static int   g_intro;              /* this run is the intro: a race with nobody 
    second / third set of props, 4 the countdown stands still, 0x10 the picture
    is mirrored (and the steering with it), 0x20 it is upside down */
 static int   g_cheat;
-#ifdef MISTER_HYBRID
-static int   g_cheat_typed;        /* MISTER: the typed words' part of it; the core's Cheats page goes with it */
-#endif
 static float g_record_lap, g_record_shown;      /* 0x1d268 and the text at 0x1f88 */
 static float g_res_lap, g_res_total;            /* a finished race waiting to be entered */
 static int   g_res_pending, g_res_laps;
@@ -4506,18 +4347,6 @@ static int    g_total_laps = 3;        /* the game's option at 0x1d2ac, + 1 */
 #define MODE_ATTACK 4
 static int    g_mode = 1, g_perfect, g_attack_won;
 static int    g_replay, g_replay_seen, g_dialog, g_rpl_n, g_rpl_at;
-#ifdef MISTER_HYBRID
-/* MISTER: the core's Cheats page in Screamer's race, every picture: its switches turn over what the
-   typed words left (CLOCK, MIRRO and UPDOW turn a bit over each time, as the game's do), its Props
-   other than Normal are MONTY's / JOINT's set.  Not in the intro, nor in a replay, which is the
-   race as it was driven. */
-static void cheats_follow(void)
-{
-    if (g_intro || os_game() != 1 || g_replay) return;
-    const int osd = mister_cheats();
-    g_cheat = (g_cheat_typed & ~0x37) | ((g_cheat_typed ^ osd) & 0x34) | ((osd & 3) ? (osd & 3) : (g_cheat_typed & 3));
-}
-#endif
 static float  g_end_clock, g_rpl_stray;
 static float  g_carnage_time = 20.0f;
 #define GATES_MAX 64
@@ -5044,10 +4873,6 @@ static void rumble_show(int driving)
     if (on < 0) on = !getenv("OS_NORUMBLE");
     int go = on && driving;
     float gain = 1.0f;
-#ifdef MISTER_HYBRID
-    go = go && mister_rumble_on();
-    if (mister_rumble_on() == 2) gain = RUMBLE_STRONG;
-#endif
     if (getenv("OS_RUMBLE_GAIN")) gain = (float)atof(getenv("OS_RUMBLE_GAIN"));
     if (!go) { g_kick.low = g_kick.high = g_kick.hold = 0.0f; g_rumble_low = g_rumble_high = 0.0f; }
     controls_rumble(g_rumble_low * gain, g_rumble_high * gain);
@@ -9033,11 +8858,7 @@ static menu_item g_page_options[] = {            /* the difficulty's highest val
     /* the game's first line is its DETAIL option (how far it draws: see
        g_far_z); the port adds a fourth value, ULTRA (texts 60..73 are the
        port's: see menu_texts), and has it on a page of its own, GRAPHICS */
-#ifdef MISTER_HYBRID
-    { 62, 1, &g_opt_detail, 2 },                 /* MISTER: the game's three levels only, and the picture's size is the core's own option */
-#else
     { 68, 1, NULL, 0 },
-#endif
 #define OPT_DIFF 1
 #define OPT_LINES 6
     { 8, 1, &g_opt_diff, 2 }, { 13, 1, &g_opt_laps, 3 },
@@ -9617,23 +9438,11 @@ static void ms_enter(int scr, int pick_car, int pick_track, int letter)
  * 3 x 5 figure of its own so that it works on every screen whatever font is
  * loaded.  Remembered for the session through OS_FPS.
  */
-#ifdef MISTER_HYBRID
-/* MISTER: the race's flat artwork read again, in the set that goes with the
-   picture's new width (tall_follow) */
-static void race_art_load(void)
-{
-    hud_load();
-    if (g_art_model >= 0) { cockpit_load(g_art_model, g_art_livery); dash_load(g_art_model); }
-}
-#endif
 
 static int g_fps_on = -1, g_fps_shown;
 
 static void fps_toggle(void)
 {
-#ifdef MISTER_HYBRID
-    return;                                  /* MISTER: the core's own FPS Counter option (the hybrid library draws it) */
-#endif
     g_fps_on = !g_fps_on;
     if (g_fps_on) setenv("OS_FPS", "1", 1); else unsetenv("OS_FPS");
 }
@@ -9679,10 +9488,6 @@ static void fps_draw(void)
 {
     static Uint32 since;
     static int frames;
-#ifdef MISTER_HYBRID
-    mister_frame_done();                               /* MISTER: OS_FPSLOG=1 writes the real speed to the log; */
-    return;                                            /* the number on the screen is the core's FPS Counter option */
-#endif
     if (g_fps_on < 0) g_fps_on = getenv("OS_FPS") != NULL;
     Uint32 now = SDL_GetTicks();
     frames++;
@@ -9792,9 +9597,6 @@ static int menu_run(int *track, int *car)
     g_opt_gres = g_s != 2 ? 1 : g_native ? 0 : 2;
     g_opt_disp = g_cfg.display;
     g_opt_detail = g_cfg.detail;
-#ifdef MISTER_HYBRID
-    if (g_opt_detail > 2) g_opt_detail = 2;  /* MISTER: no ULTRA */
-#endif
     g_opt_diff = g_cfg.diff; g_opt_laps = g_cfg.laps;
     if (getenv("OS_MENU_GOTO")) { page = atoi(getenv("OS_MENU_GOTO")); unsetenv("OS_MENU_GOTO"); }
     menu_keep *const kept = os_slot(12) && ((menu_keep *)os_slot(12))->on ? os_slot(12) : NULL;
@@ -9885,25 +9687,10 @@ static int menu_run(int *track, int *car)
         }
         tick++;
         g_menu_tick = tick;
-        int osd_aburn = 0;
-#ifdef MISTER_HYBRID
-        {
-            /* MISTER: the core's Cheats page.  Its two triggers do what TAZOR and INVER do (kept with
-               the records); Afterburner Difficulty is ABURN's while it is on: AFTERBURNER as it is
-               switched on, and in the difficulty's line */
-            static int aburn_was = -1;
-            const int t = mister_triggers();
-            if (t & 1) { g_save.bullet = 1; save_write(); snd_play(8); printf("cheat: TAZOR (the core's)\n"); fflush(stdout); }
-            if (t & 2) { g_save.level = 9; save_write(); snd_play(8); printf("cheat: INVER (the core's)\n"); fflush(stdout); }
-            osd_aburn = mister_cheat_afterburner();
-            if (osd_aburn && aburn_was == 0) g_opt_diff = 3;
-            aburn_was = osd_aburn;
-        }
-#endif
         g_track_max = unlock ? 11 : g_save.level + 2 > 11 ? 11 : g_save.level + 2;
         g_car_max = (unlock || g_save.bullet) ? 12 : 11;
         if (g_car_max > g_nmenu_car - 1) g_car_max = g_nmenu_car - 1;
-        g_page_options[OPT_DIFF].max = (unlock || g_save.bullet || cheat_diff || osd_aburn) ? 3 : 2;            /* AFTERBURNER */
+        g_page_options[OPT_DIFF].max = (unlock || g_save.bullet || cheat_diff) ? 3 : 2;            /* AFTERBURNER */
 #ifdef OS_GPU
         {   /* GRAPHICS: FILTERING and MSAA where the card has them (their lines are not there otherwise) */
             const int most = gpu_msaa_max();
@@ -9943,7 +9730,6 @@ static int menu_run(int *track, int *car)
         /* the resolution line was changed: it is saved, and the menu comes back in it (GRAPHICS:
            only from or to VGA -- NATIVE and SVGA have the same flat artwork; the window or the
            whole screen at once) */
-#ifndef MISTER_HYBRID
         g_opt_res = g_opt_gres != 1;
         if (!shotfile[0] && g_opt_res == (g_s == 2) && (g_opt_gres == 0) != g_native) {
             g_native = g_cfg.native = g_opt_gres == 0;
@@ -9957,7 +9743,6 @@ static int menu_run(int *track, int *car)
             cfg_save();
             gpu_quality_set();
         }
-#endif
 #endif
         if (!shotfile[0] && g_opt_res != (g_s == 2)) {
             g_cfg.res = g_opt_res; g_cfg.detail = g_opt_detail; g_cfg.diff = g_opt_diff; g_cfg.laps = g_opt_laps;
@@ -10679,15 +10464,8 @@ int main(int argc, char **argv)
             char **av = os_argv();
             os_next_done();
             int r = session(ac, av);
-#ifdef MISTER_HYBRID
-            if (!os_has_next()) return r ? r : mister_exit_code();
-#else
             if (!os_has_next()) return r;
-#endif
         }
-#ifdef MISTER_HYBRID
-        mister_show_wait();
-#endif
         snd_close();
         os_state_restore();
     }
@@ -10873,14 +10651,6 @@ void s2m_palette(const uint8_t *six)           /* 0x51664: the palette shown */
    with every second row of its 400 (hud_put, pkc_draw, s2m_picture, s2m_dark, the clips halve the
    row) -- so this is "the H set", not "400 rows" */
 int s2_screen_hi(void) { return g_s == 2; }
-int s2_osd_triggers(void)
-{
-#ifdef MISTER_HYBRID
-    return mister_triggers();
-#else
-    return 0;
-#endif
-}
 void s2m_fonts(void)                           /* 0x50dd3 / 0x50a9c: the menu's font and sprites */
 {
     g_fnt_file = s2_screen_hi() ? "build/dec/GRAF1/MENUH.FNT" : "build/dec/GRAF1/MENUL.FNT";
@@ -11822,10 +11592,6 @@ static int session(int argc, char **argv)
         g_fnt_file = "build/dec/GRAF/ATTRL.FNT";      /* the credits have their own font file */
     }
     if (getenv("OS_CHEAT") && !g_intro) g_cheat = atoi(getenv("OS_CHEAT"));
-#ifdef MISTER_HYBRID
-    g_cheat_typed = g_cheat;
-    cheats_follow();
-#endif
     const int records_ok = (!getenv("OS_DRIVE_DEMO") || getenv("OS_RECORDTEST")) && !getenv("OS_REPLAYFILE") && !g_intro;   /* the robot's laps are not records */
     g_record_lap = g_record_shown = (g_mode == 1 && track >= 1 && track <= 6) ? g_save.t[track - 1].lap[0] : 0.0f;
     const char *shot  = (argc > 4 && strcmp(argv[3], "--shot") == 0)
@@ -11836,9 +11602,6 @@ static int session(int argc, char **argv)
     /* the DETAIL option; OS_DETAIL=0..3 for one run, OS_DRAWDIST=<units> the
        old test switch (no far plane, pieces out to that distance) */
     g_detail = getenv("OS_DETAIL") ? atoi(getenv("OS_DETAIL")) & 3 : g_cfg.detail & 3;
-#ifdef MISTER_HYBRID
-    if (g_detail == 3) g_detail = 2;
-#endif
     if (g_detail == 3) { g_far_z = 0.0f; g_drawdist = DRAWDIST_FAR; }
     else { g_far_z = g_detail == 2 ? 43808.0f : 27808.0f; g_drawdist = DRAWDIST_ORIGINAL; }
     if (getenv("OS_DRAWDIST")) { g_far_z = 0.0f; g_drawdist = (float)atof(getenv("OS_DRAWDIST")); }
@@ -11852,9 +11615,6 @@ static int session(int argc, char **argv)
     char gfxdir[512];
     {
         char set = g_detail >= 1 && g_yd == 1 ? 'H' : 'L';
-#ifdef MISTER_HYBRID
-        set = 'L';                  /* MISTER: the low set, as before (the H set's extra scenery not tried on the ARM) */
-#endif
         snprintf(gfxdir, sizeof gfxdir, "build/dec/MAP%dH/MAP%d.MMP", track, track);
         if (set == 'H' && !os_exists(gfxdir)) set = 'L';
         snprintf(gfxdir, sizeof gfxdir, "build/dec/MAP%d%c", track, set);
@@ -12122,9 +11882,6 @@ static int session(int argc, char **argv)
        camera to the unit) was 1 / 0.871 the size about the same eye line (NOTES2 S2-5y) */
     g_focal_x = (getenv("OS_FOCAL") ? (float)atof(getenv("OS_FOCAL")) : os_game() == 2 ? 112.0f : GAME_FOCAL) * (float)g_s;
     g_focal_y = g_focal_x / (float)g_yd;
-#ifdef MISTER_HYBRID
-    g_in_race = 1;
-#endif
     float base_pitch = -0.10f;
 
     fb  = malloc(sizeof *fb       * FB_MAXW * (FB_MAXH + TALL_ROWS));     /* (the biggest: the size can change as it runs) */
@@ -12490,9 +12247,6 @@ static int session(int argc, char **argv)
     Uint64 last = SDL_GetPerformanceCounter();
     const double tick = 1.0 / (double)SDL_GetPerformanceFrequency();
     while (running) {
-#ifdef MISTER_HYBRID
-        cheats_follow();
-#endif
         /* (the frame's time from the fine clock: in whole milliseconds a 180 Hz screen's
            frames are 5 and 6 by turns) */
         const Uint64 frame_began = SDL_GetPerformanceCounter();
@@ -13196,19 +12950,7 @@ static int session(int argc, char **argv)
             }
         }
         lay_end();
-#ifdef MISTER_HYBRID
-        {
-            /* MISTER: the helper thread turns the picture into the screen's and
-               copies it; nothing draws on it until that thread has filled the
-               next scene */
-            tri_helper *h = tri_helper_get();
-            if (!h) show_picture(tex);
-            else if (mister_show_later(os_slot(0), fb, show_palette(), FB_W, FB_H)) { SDL_AtomicSet(&h->show, 1); SDL_SemPost(h->wake); }
-            g_show_fade = 1.0f; g_show_to_k = 0.0f;
-        }
-#else
         show_picture(tex);
-#endif
         const double worked = (double)(SDL_GetPerformanceCounter() - frame_began) * tick;
         SDL_RenderClear(ren);
         SDL_RenderCopy(ren, tex, NULL, NULL);
@@ -13235,9 +12977,6 @@ static int session(int argc, char **argv)
             }
         }
     }
-#ifdef MISTER_HYBRID
-    mister_show_wait();
-#endif
 
     if (g_s2_on) s2_race_leave();                /* (0x2b2a8: time attack's ghost) */
     if (g_s2_on && getenv("OS_S2MENU3D") && getenv("OS_FROM_MENU") && !(s2_mode & 0x80)) s2_race_results_keep();   /* (for the game's menu: S2-5zq) */
@@ -13250,9 +12989,6 @@ static int session(int argc, char **argv)
     if (!g_window_closed && !g_intro && !getenv("OS_DRIVE_DEMO") && !getenv("OS_DEMO") && !shot) {      /* 0x21d8c */
         Uint32 t0 = SDL_GetTicks();
         {
-#ifdef MISTER_HYBRID
-            mister_show_wait();                          /* (the helper may still be handing the last picture over) */
-#endif
             for (;;) {
                 float f = 1.0f - (float)(SDL_GetTicks() - t0) / 500.0f;
                 if (f <= 0.0f) break;

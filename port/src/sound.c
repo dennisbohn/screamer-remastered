@@ -36,7 +36,6 @@
 void music_frame(float *left, float *right);   /* one output frame at RATE_OUT */
 int  music_play(const char *dir, int number);
 void music_stop(void);
-void fmchip_at(int frame);
 void music_volume(float v);                    /* the chip in the mix: the port's own */
 void music_master(float m);                    /* the game's music volume, 1 = as it starts */
 
@@ -195,7 +194,6 @@ static void mix(int16_t *out, int frames, int cd)
         zl[0] = g_lp_b1 * holdl - g_lp_a1 * accl + zl[1]; zl[1] = g_lp_b2 * holdl - g_lp_a2 * accl;
         zr[0] = g_lp_b1 * holdr - g_lp_a1 * accr + zr[1]; zr[1] = g_lp_b2 * holdr - g_lp_a2 * accr;
         float ml = 0.0f, mr = 0.0f;
-        fmchip_at(2 * i);
         music_frame(&ml, &mr);
         if (cd) cd_audio_frame(&ml, &mr, g_cd_gain);
         accl += ml; accr += mr;
@@ -208,8 +206,7 @@ static void mix(int16_t *out, int frames, int cd)
     }
 }
 
-/* The device plays 44100 Hz.  MISTER: the core plays 44100, and SDL's own way of making that
-   out of 22050 took an eighth of a processor.  Everywhere: Screamer 2's CD songs are the disc's
+/* The device plays 44100 Hz: Screamer 2's CD songs are the disc's
    44100 (at 22050 their top octave was gone).  So each frame mixed here at 22050 goes out twice,
    half-way to the next one the second time, and the CD's song is added at the full rate. */
 static void callback(void *user, Uint8 *stream, int len)

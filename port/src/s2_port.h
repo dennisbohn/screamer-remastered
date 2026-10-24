@@ -23,7 +23,6 @@ void s2_controls(int accelerate, int brake, int left, int right, int gear_up, in
 void s2_controls_pad(float throttle, float brake, float steer, int gear_up, int gear_down);
 /* the MiSTer core's Cheats page: its triggers selected since the last asking (bit 0 = the first),
    0 elsewhere (main.c) */
-int  s2_osd_triggers(void);
 void s2_go(void);                            /* the start: before it the cars are held */
 void s2_frame(float step);
 void s2_frame_times(float raw);              /* a test: the next frames' unsmoothed time (0x133354) */
