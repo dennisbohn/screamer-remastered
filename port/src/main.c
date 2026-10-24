@@ -373,6 +373,7 @@ static SDL_Window *sys_window(SDL_Renderer **ren)
            calls to it pass by (the SDL_Render* above) -- or, with no OpenGL, SDL's renderer as ever */
         if (gpu_wanted && win && gpu_open(win)) {
             os_slot_set(0, win); os_slot_set(1, win);
+            SDL_ShowCursor(display_flags() ? SDL_DISABLE : SDL_ENABLE);   /* (the mouse: not seen on the whole screen) */
             gpu_quality_set();
             if (ren) *ren = os_slot(1);
             return win;
@@ -386,6 +387,7 @@ static SDL_Window *sys_window(SDL_Renderer **ren)
                    (info.flags & SDL_RENDERER_PRESENTVSYNC) ? "on" : "NOT given by the driver");
         if (r) SDL_RenderSetLogicalSize(r, 960, 720);
         os_slot_set(0, win); os_slot_set(1, r);
+        SDL_ShowCursor(display_flags() ? SDL_DISABLE : SDL_ENABLE);
     }
     if (ren) *ren = os_slot(1);
     return win;
@@ -625,6 +627,7 @@ static void sys_fullscreen(int on)
 {
     SDL_Window *win = os_slot(0);
     if (win) SDL_SetWindowFullscreen(win, on ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
+    SDL_ShowCursor(on ? SDL_DISABLE : SDL_ENABLE);
     if (g_cfg.display != on) { g_cfg.display = on; cfg_save(); }
 }
 
@@ -2661,7 +2664,7 @@ static void render_scene(const camera *cam, const sky *s)
     if (getenv("OS_ANIMCLOCK"))            /* 0..1: fix the animation clock (for --shot) */
     {
         g_anim_clock = (int)(atof(getenv("OS_ANIMCLOCK")) * 65535.0);
-        mesh_animate_all(g_anim_clock);
+        mesh_animate_all(g_anim_clock, 0);
     }
 #ifdef OS_GPU
     /* M2: Screamer's scene on the card (OS_GPU3D=0: still raster_job, for comparing) */
@@ -6268,6 +6271,8 @@ static void cars_collide(void)
 static int   g_dash[29];
 static int   g_have_dash;
 static float g_needle_speed, g_needle_rpm;
+static float g_needle_was[2], g_needle_k = 1.0f;   /* (as they were before the last step, and how far on: lerp_keep, lerp_apply) */
+static float needle_shown(float now, float was) { return was + (now - was) * g_needle_k; }
 
 static void dash_load(int model)
 {
@@ -7436,8 +7441,8 @@ static void hud_draw(int instruments)
     if (instruments && g_views[g_view].cockpit) {
         cockpit_draw();
         if (g_have_dash) {
-            dash_needle(g_dash[2], g_dash[3], g_dash[0], g_needle_speed, 255);
-            dash_needle(g_dash[5], g_dash[6], g_dash[0], g_needle_rpm, 255);
+            dash_needle(g_dash[2], g_dash[3], g_dash[0], needle_shown(g_needle_speed, g_needle_was[0]), 255);
+            dash_needle(g_dash[5], g_dash[6], g_dash[0], needle_shown(g_needle_rpm, g_needle_was[1]), 255);
             int gear = g_pc.gear;
             if (gear >= 0 && gear <= 6)
                 /* the lamps' places ARE in the picture's own pixels (the H section's are doubled) */
@@ -7450,7 +7455,7 @@ static void hud_draw(int instruments)
         hud_text(0x10f, 0xbb, buf, 2, 7, 1);
         snprintf(buf, sizeof buf, "\001%d", g_pc.gear);
         hud_text(0x130, 0xbb, buf, 2, 1, 1);
-        dash_needle(0x10f, 0xa8, 0x1e, g_needle_rpm, 0x75);
+        dash_needle(0x10f, 0xa8, 0x1e, needle_shown(g_needle_rpm, g_needle_was[1]), 0x75);
         LAY_MID();
     }
 
@@ -11351,14 +11356,17 @@ static void lerp_keep(void)
 {
     if (!g_lerp_on) return;
     lerp_take(&g_lerp_was);
+    g_needle_was[0] = g_needle_speed; g_needle_was[1] = g_needle_rpm;
     g_lerp_ok = 1;
 }
 
 /* before drawing: k of the way from before the last step to after it */
 static int lerp_apply(float k)
 {
+    g_needle_k = 1.0f;
     if (!g_lerp_on || !g_lerp_ok || k >= 1.0f) return 0;
     if (k < 0.0f) k = 0.0f;
+    g_needle_k = k;
     const lerp_state *a = &g_lerp_was;
     lerp_state *b = &g_lerp_now;
     lerp_take(b);
@@ -12752,7 +12760,7 @@ static int session(int argc, char **argv)
         g_anim_time += dt * 0.3f;
         if (g_anim_time >= 1.0f) g_anim_time -= 1.0f;
         g_anim_clock = (int)(g_anim_time * 65535.0f);
-        mesh_animate_all(g_anim_clock);
+        mesh_animate_all(g_anim_clock, g_lerp_on && os_game() == 1);   /* (between the frames as the picture between the steps) */
         smoke_dump();
         s2_render(&view, &sk);
         lerp_undo(lerped);

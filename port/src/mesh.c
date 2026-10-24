@@ -68,11 +68,14 @@ int mesh_load(mesh *m, const char *path)
 static mesh *g_moving[64];
 static int   g_nmoving;
 
-static void mesh_pose(mesh *m, int f)
+/* frame f, w of the way to frame g (the port's own: between the game's frames, every picture) */
+static void mesh_pose_mix(mesh *m, int f, int g, float w)
 {
     for (int pi = 0; pi < m->nparts; pi++) {
         struct mesh_part *p = &m->part[pi];
-        const int16_t *q = p->frame + 12 * f;
+        const int16_t *qa = p->frame + 12 * f, *qb = p->frame + 12 * g;
+        float q[12];
+        for (int j = 0; j < 12; j++) q[j] = (float)qa[j] + ((float)qb[j] - (float)qa[j]) * w;
         const float k = 1.0f / 16383.0f;
         for (int i = 0; i < p->vcount; i++) {
             vec3 v = p->rest_vert[i];
@@ -115,13 +118,20 @@ float mesh_reach(const mesh *m)
     return best;
 }
 
-void mesh_animate_all(int clock16)
+static void mesh_pose(mesh *m, int f) { mesh_pose_mix(m, f, f, 0.0f); }
+
+/* the frame is the game's  frames * clock >> 16;  with `between` the next one mixed in by what is
+   left over (the clock goes on every picture, the frames are few: the football helmet on track 1
+   has 60 to a turn of 3.3 s) */
+void mesh_animate_all(int clock16, int between)
 {
     for (int i = 0; i < g_nmoving; i++) {
         mesh *m = g_moving[i];
-        int f = (int)(((long)m->nframes * (clock16 & 0xffff)) >> 16);
+        const long at = (long)m->nframes * (clock16 & 0xffff);
+        int f = (int)(at >> 16);
         if (f < 0 || f >= m->nframes) f = 0;
-        mesh_pose(m, f);
+        if (between) mesh_pose_mix(m, f, (f + 1) % m->nframes, (float)(at & 0xffff) / 65536.0f);
+        else mesh_pose(m, f);
     }
 }
 

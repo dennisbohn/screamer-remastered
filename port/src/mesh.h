@@ -179,7 +179,7 @@ typedef struct {
 } mesh;
 
 /* move every loaded mesh that has moving parts to the clock's frame (0..65535) */
-void mesh_animate_all(int clock16);
+void mesh_animate_all(int clock16, int between);     /* between: the next frame mixed in by what is left over */
 /* how far from its origin a mesh with moving parts ever reaches */
 float mesh_reach(const mesh *m);
 

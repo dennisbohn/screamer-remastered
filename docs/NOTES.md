@@ -886,6 +886,10 @@ grip of the surface underneath; `+0x194 + 0x54*n` the four wheels.
   `OS_LERPLOG=1` prints the camera and the car of each picture. Measured at 120 Hz on track 1:
   without it 700 of 1200 pictures do not move, with it every picture moves by 63 +- 0.2 units.
   Screamer 2's race (25 steps a second, `s2_race_step`) is not mixed yet.
+  Also between frames (2026-10-24): the moving parts' frames (`mesh_animate_all(clock, between)`:
+  the next frame mixed in by what is left of the clock -- the football helmet on track 1 has 60 to
+  a turn of 3.3 s, 18 a second) and the instruments' needles (`needle_shown`, as they were before
+  the last step and after it).
 - **engine** (`0x18da0`): engine locked to the wheels, `rpm = ratio[gear] * speed *
   (maxrpm/maxspd * 0.02223)`; throttle adds `accel * pull[gear] * curve` rpm/s, pull =
   5, 3.5, 2, 0.95, 0.78, 0.72 and curve a half-sine peaking mid-range of the gear;
