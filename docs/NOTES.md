@@ -2123,9 +2123,10 @@ DYNAMICALLY — a statically linked SDL would have its statics inside the range 
 put back. `.bss` is 84 MB because the meshes are static arrays; zeroing it takes a few
 milliseconds per change of part.
 **Directories** (`os_path()` rewrites the names the code has always used):
-`build/dec/…` → the DATA directory: `-data DIR`, `$SCREAMER_DATA`, else the first
+`build/dec/…` → the DATA directory (since 2026-10-24: `-data DIR`, the program's own folder, or the
+installers' records in the registry, port.c `installed_game`; before: `-data DIR`, `$SCREAMER_DATA`, else the first
 that exists of `./build/dec`, `<program dir>/data`, `<program dir>/../../build/dec`,
-`./data`. `openscreamer.*` → the HOME directory: `-home DIR`, `$SCREAMER_HOME`, else
+`./data`). `openscreamer.*` → the HOME directory: `-home DIR`, `$SCREAMER_HOME`, else
 the current directory when it already holds the port's files, else
 `~/.config/screamer-remastered`. `REPLAYS/…` (time-attack ghosts, which the port used to put
 in the GAME's directory) → `<home>/openscreamer.ghosts/`.

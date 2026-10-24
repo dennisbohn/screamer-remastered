@@ -13,11 +13,10 @@
  * PATHS.  The code names its files as it always has -- "build/dec/..." for
  * the game's extracted data, "screamer-remastered.*" and "REPLAYS/..." for what the
  * port writes -- and os_path() turns those into real places:
- *   the DATA directory   -data DIR, or $SCREAMER_DATA, or the first of
- *                        ./screamer, <program's directory>/screamer,
- *                        <program's directory>/../../screamer, ./build/dec,
- *                        <program's directory>/data,
- *                        <program's directory>/../../build/dec, ./data.
+ *   the DATA directory   -data DIR (--data), or the program's own directory,
+ *                        or where the installers say they put the game
+ *                        (port.c installed_game: GOG's record, the uninstall
+ *                        records, Steam's app manifests) -- nothing guessed.
  *                        It is either a copy of the GAME (its DATA and GFX
  *                        folders: the containers are read as they are) or a
  *                        directory of files unpacked by tools/extract.sh.

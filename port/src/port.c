@@ -470,9 +470,9 @@ static void os_help(const char *me)
 "OPTIONS\n"
 "  -h, --help     this text\n""  --version      the version, and nothing else\n"
 "  -data DIR      your copy of the game: the folder that holds its DATA and GFX folders\n"
-"                 default: $SCREAMER_DATA, the program's own folder, the current one, a\n"
-"                 folder screamer beside them, C:\\GOG Games\\Screamer, Steam's Screamer\n"
-"                 (a folder of files already unpacked with tools/extract.sh works too)\n"
+"                 (also --data; a folder of files unpacked with tools/extract.sh works too).\n"
+"                 Without it: the program's own folder, else where GOG, Steam or another\n"
+"                 installer put the game (as they record it in the registry)\n"
 "  -game N        1 = Screamer, 2 = Screamer 2.  Default: the one whose files are found\n"
 "                 (./screamer, ./screamer2); both found: a first page chooses (the last\n"
 "                 choice lit); -data DIR names either game's folder\n"
@@ -582,6 +582,120 @@ static int which_game(const char *dir)
     return 0;
 }
 
+/*
+ * WHERE THE GAME IS INSTALLED (Windows): not guessed but looked up where the installers write it --
+ * GOG's own record (SOFTWARE\GOG.com\Games\<id>: gameName, path), every installer's uninstall record
+ * (...\Uninstall\<id>: DisplayName, InstallLocation; GOG's Screamer 2 has only this one) and Steam's
+ * libraries (SteamPath, steamapps\libraryfolders.vdf, each steamapps\common\<name>).  Every place
+ * found is taken only if the game's files are there (which_game).
+ */
+#ifdef _WIN32
+static void reg_text(HKEY root, const char *key, const char *name, REGSAM view, char *out, DWORD n)
+{
+    HKEY k;
+    out[0] = 0;
+    if (RegOpenKeyExA(root, key, 0, KEY_READ | view, &k) != ERROR_SUCCESS) return;
+    DWORD type = 0, size = n - 1;
+    if (RegQueryValueExA(k, name, NULL, &type, (BYTE *)out, &size) != ERROR_SUCCESS || (type != REG_SZ && type != REG_EXPAND_SZ)) size = 0;
+    out[size < n ? size : n - 1] = 0;
+    RegCloseKey(k);
+}
+
+static int game_at(const char *dir, int g, char *out, size_t n)
+{
+    char d[700];
+    snprintf(d, sizeof d, "%s", dir);
+    for (char *c = d; *c; c++) if (*c == '\\') *c = '/';
+    size_t l = strlen(d);
+    while (l > 3 && d[l - 1] == '/') d[--l] = 0;
+    if (!d[0] || which_game(d) != g) return 0;
+    snprintf(out, n, "%s", d);
+    return 1;
+}
+
+/* the subkeys of root\key whose value `name` is `want`: their value `where` a place of game g */
+static int reg_games(HKEY root, const char *key, const char *name, const char *where, const char *want, int g, char *out, size_t n)
+{
+    static const REGSAM views[2] = { KEY_WOW64_32KEY, KEY_WOW64_64KEY };
+    for (int v = 0; v < 2; v++) {
+        HKEY k;
+        if (RegOpenKeyExA(root, key, 0, KEY_READ | views[v], &k) != ERROR_SUCCESS) continue;
+        char sub[256], full[600], text[700];
+        for (DWORD i = 0;; i++) {
+            DWORD sl = sizeof sub;
+            if (RegEnumKeyExA(k, i, sub, &sl, NULL, NULL, NULL, NULL) != ERROR_SUCCESS) break;
+            snprintf(full, sizeof full, "%s\\%s", key, sub);
+            reg_text(root, full, name, views[v], text, sizeof text);
+            if (strcmp(text, want)) continue;
+            reg_text(root, full, where, views[v], text, sizeof text);
+            if (game_at(text, g, out, n)) { RegCloseKey(k); return 1; }
+        }
+        RegCloseKey(k);
+    }
+    return 0;
+}
+
+/* a line  "key"  "value"  of Steam's files: the value, its \\ as \ */
+static int acf_value(const char *line, const char *key, char *out, size_t n)
+{
+    char q[64];
+    snprintf(q, sizeof q, "\"%s\"", key);
+    const char *at = strstr(line, q);
+    if (!at || !(at = strchr(at + strlen(q), '"'))) return 0;
+    size_t k = 0;
+    for (at++; *at && *at != '"' && k + 1 < n; at++) {
+        if (*at == '\\' && at[1] == '\\') at++;
+        out[k++] = *at;
+    }
+    out[k] = 0;
+    return 1;
+}
+
+static int installed_game(int g, char *out, size_t n)
+{
+    const char *const want = g == 2 ? "Screamer 2" : "Screamer";
+    const char *const uninstall = "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall";
+    if (reg_games(HKEY_LOCAL_MACHINE, "SOFTWARE\\GOG.com\\Games", "gameName", "path", want, g, out, n)) return 1;
+    if (reg_games(HKEY_LOCAL_MACHINE, uninstall, "DisplayName", "InstallLocation", want, g, out, n)) return 1;
+    if (reg_games(HKEY_CURRENT_USER, uninstall, "DisplayName", "InstallLocation", want, g, out, n)) return 1;
+    char steam[700], vdf[800], cand[1100];
+    reg_text(HKEY_CURRENT_USER, "Software\\Valve\\Steam", "SteamPath", 0, steam, sizeof steam);
+    if (!steam[0]) return 0;
+    /* the libraries: Steam's own folder and every "path" in libraryfolders.vdf; in each, the app
+       manifests (appmanifest_<id>.acf) give a game's "name" and "installdir" under steamapps\common */
+    char libs[8][700];
+    int nlib = 0;
+    snprintf(libs[nlib++], sizeof libs[0], "%s", steam);
+    snprintf(vdf, sizeof vdf, "%s/steamapps/libraryfolders.vdf", steam);
+    FILE *f = fopen(vdf, "r");
+    char line[1024];
+    while (f && nlib < 8 && fgets(line, sizeof line, f))
+        if (acf_value(line, "path", libs[nlib], sizeof libs[0])) nlib++;
+    if (f) fclose(f);
+    for (int l = 0; l < nlib; l++) {
+        char pattern[800];
+        snprintf(pattern, sizeof pattern, "%.700s/steamapps/appmanifest_*.acf", libs[l]);
+        WIN32_FIND_DATAA fd;
+        HANDLE h = FindFirstFileA(pattern, &fd);
+        if (h == INVALID_HANDLE_VALUE) continue;
+        do {
+            char acf[1000], name[300] = "", dir[300] = "";
+            snprintf(acf, sizeof acf, "%.700s/steamapps/%.250s", libs[l], fd.cFileName);
+            FILE *m = fopen(acf, "r");
+            while (m && fgets(line, sizeof line, m)) { acf_value(line, "name", name, sizeof name); acf_value(line, "installdir", dir, sizeof dir); }
+            if (m) fclose(m);
+            if (strcmp(name, want) || !dir[0]) continue;
+            snprintf(cand, sizeof cand, "%.700s/steamapps/common/%.250s", libs[l], dir);
+            if (game_at(cand, g, out, n)) { FindClose(h); return 1; }
+        } while (FindNextFileA(h, &fd));
+        FindClose(h);
+    }
+    return 0;
+}
+#else
+static int installed_game(int g, char *out, size_t n) { (void)g; (void)out; (void)n; return 0; }
+#endif
+
 void os_init(int argc, char **argv)
 {
 #ifdef _WIN32
@@ -597,12 +711,12 @@ void os_init(int argc, char **argv)
         }
     K = calloc(1, sizeof *K);
     if (!K) exit(1);
-    const char *data = getenv("SCREAMER_DATA"), *home = getenv("SCREAMER_HOME");
+    const char *data = NULL, *home = getenv("SCREAMER_HOME");
     int game = getenv("SCREAMER_GAME") ? atoi(getenv("SCREAMER_GAME")) : 0;    /* 0: whichever is found */
     K->argv[K->argc++] = argv[0];
     for (int i = 1; i < argc && K->argc < 15; i++) {
         if (!strcmp(argv[i], "-d")) K->dev = 1;
-        else if (!strcmp(argv[i], "-data") && i + 1 < argc) data = argv[++i];
+        else if ((!strcmp(argv[i], "-data") || !strcmp(argv[i], "--data")) && i + 1 < argc) data = argv[++i];
         else if (!strcmp(argv[i], "-home") && i + 1 < argc) home = argv[++i];
         else if (!strcmp(argv[i], "-game") && i + 1 < argc) game = atoi(argv[++i]);
         else if (!strcmp(argv[i], "-res") && i + 1 < argc) {
@@ -628,32 +742,16 @@ void os_init(int argc, char **argv)
         snprintf(K->data, sizeof K->data, "%s", data);
         if (!game) game = which_game(K->data);
     } else {
-        /* a copy of the game first, then files already unpacked; Screamer 2's are
-           the same places with a 2 at the end of the name */
-        /* the program's own folder and the current one (the program put into the game's folder),
-           then a folder screamer / screamer2 beside them, the developer's places, and last where
-           GOG and Steam put their copies */
-        static const char *const where[] = { "%s", ".", "screamer%s", "%s/screamer%s", "%s/../../screamer%s", "build/dec%s",
-                                             "%s/data%s", "%s/../../build/dec%s", "data%s"
-#ifdef _WIN32
-                                             , "C:/GOG Games/Screamer%s", "C:/Program Files (x86)/GOG Galaxy/Games/Screamer%s",
-                                             "C:/Program Files (x86)/Steam/steamapps/common/Screamer%s"
-#endif
-        };
+        /* the program's own folder (the program put into the game's), else where the installers
+           say they put it (installed_game) -- nothing guessed */
         char found[3][700] = { "", "", "" };
-        for (int g = 1; g <= 2; g++)
-            for (size_t i = 0; i < sizeof where / sizeof where[0] && !found[g][0]; i++) {
-                char cand[700];
-                const char *const two = g == 2 ? (strstr(where[i], "Files") || strstr(where[i], "GOG Games") ? " 2" : "2") : "";
-                if (!strcmp(where[i], "%s")) snprintf(cand, sizeof cand, "%s", exe);
-                else if (!strcmp(where[i], ".")) snprintf(cand, sizeof cand, ".");
-                else if (where[i][0] == '%' && where[i][1] == 's' && where[i][2] == '/') snprintf(cand, sizeof cand, where[i], exe, two);
-                else snprintf(cand, sizeof cand, where[i], two);
-                if (is_dir(cand) && which_game(cand) == g) snprintf(found[g], 700, "%s", cand);
-            }
+        for (int g = 1; g <= 2; g++) {
+            if (which_game(exe) == g) snprintf(found[g], 700, "%s", exe);
+            else installed_game(g, found[g], sizeof found[g]);
+        }
         /* no -game: the one that is there; both there: Screamer (the choice between them is the menu's) */
         if (!game) { K->both = found[1][0] && found[2][0]; game = found[1][0] || !found[2][0] ? 1 : 2; }
-        snprintf(K->data, sizeof K->data, "%.700s", found[game][0] ? found[game] : game == 2 ? "screamer2" : "screamer");
+        snprintf(K->data, sizeof K->data, "%.700s", found[game][0] ? found[game] : exe);
         if (K->both) snprintf(K->other, sizeof K->other, "%.700s", found[3 - game]);
     }
     K->game = game ? game : 1;
@@ -696,12 +794,13 @@ void os_init(int argc, char **argv)
     if (!is_dir(K->data)) {
         printf("Checking game data ... FAILED\n");
         fflush(stdout);
-        fprintf(stderr, "screamer-remastered: no game at \"%s\".\n"
-                        "Say where your copy of Screamer is with -data DIR (the folder that holds its DATA and\n"
-                        "GFX folders), or put it next to the program as \"screamer\".\n", K->data);
+        fprintf(stderr, "screamer-remastered: no game found (\"%s\").\n"
+                        "Put the program into your copy of Screamer (the folder that holds its DATA and GFX\n"
+                        "folders), or say where it is with -data DIR.\n", K->data);
 #ifdef _WIN32
-        win_fatal("The game was not found.\n\nScreamer Remastered needs a copy of the original Screamer: put the game's folder "
-                  "(the one that holds DATA and GFX) next to screamer-remastered.exe, named \"screamer\".");
+        win_fatal("The game was not found.\n\nScreamer Remastered needs a copy of the original Screamer: put "
+                  "screamer-remastered.exe and SDL2.dll into the game's folder (the one that holds DATA and GFX), "
+                  "or start it with -data and that folder.");
 #endif
         exit(1);
     }

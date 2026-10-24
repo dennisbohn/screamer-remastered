@@ -218,7 +218,8 @@ would be inside it; on Windows SDL2 must stay a DLL); a depth buffer, not the en
 painter's sort; fixed 50 Hz physics; triangles filled by two threads.
 Lens: `screen = centre + coord × 128 / depth`, eye line 65 % down. 1 m = 328 units.
 One process: `main()` loops over `session()`; parts hand over with `os_next` / `os_go`.
-Data directory: `-data`, `$SCREAMER_DATA`, `./screamer`, … ; home: `-home`,
+Data directory: `-data` (`--data`), the program's own folder, or the installers' records in the
+registry (`installed_game`: GOG, uninstall entries, Steam's app manifests), nothing else; home: `-home`,
 `$SCREAMER_HOME`, cwd if it holds the port's files, else `~/.config/screamer-remastered`
 (`%APPDATA%\screamer-remastered`). Files: `screamer-remastered.cfg`, `.records`, `.champ`,
 `.replays/`, `.ghosts/` — the port's own formats, never the game's `CHOICE.DAT`.
