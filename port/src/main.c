@@ -3546,6 +3546,7 @@ static mesh *s2_obst_mesh(const char *name)
 
 /* the puffs the game has on, as they stand after its last frame (they do not move, but for
    those of the car the chase view follows: 0x2073c) */
+static float s2_angle_between(float a, float b, float t);
 static void s2_puffs_show(float t)
 {
     s2_puff p[S2_PUFFS];
@@ -3615,7 +3616,8 @@ static void s2_puffs_show(float t)
         if (getenv("OS_S2PUFFLOG") && m) printf("obstacles: %d\n", m);
     }
     /* the track's animations: an object along its path (0x2cee4), drawn between the game's
-       last two frames; one that has just appeared starts where it is */
+       last two frames, its heading and climb too (the port's); one that has just appeared starts
+       where it is */
     {
         int m = 0;
         for (int k = 0; k < 40 && m < g_s2_nanimobj; k++) {
@@ -3627,7 +3629,7 @@ static void s2_puffs_show(float t)
             o->m = mm;
             o->sprite = b->faces_screen;
             o->x = s2_between(a->x, b->x, t); o->y = s2_between(a->y, b->y, t); o->z = s2_between(a->height, b->height, t);
-            o->yaw = b->heading; o->pitch = -b->climb; o->roll = 0.0f;     /* (the game's up / down, +0x14, is the port's pitch the other way round:
+            o->yaw = s2_angle_between(a->heading, b->heading, t); o->pitch = -s2_angle_between(a->climb, b->climb, t); o->roll = 0.0f;   /* (the game's up / down, +0x14, is the port's pitch the other way round:
                                                                                  the cable cars on track 4's slopes leant against their rails -- Danik) */
             if (getenv("OS_S2ANIMTURN")) { float a0 = 0, a1 = 0, a2 = 0; sscanf(getenv("OS_S2ANIMTURN"), "%f,%f,%f", &a0, &a1, &a2); o->pitch += a0; o->yaw += a1; o->roll += a2; }   /* a test */
         }
@@ -12852,7 +12854,7 @@ static int session(int argc, char **argv)
         g_anim_time += dt * 0.3f;
         if (g_anim_time >= 1.0f) g_anim_time -= 1.0f;
         g_anim_clock = (int)(g_anim_time * 65535.0f);
-        mesh_animate_all(g_anim_clock, g_lerp_on && os_game() == 1);   /* (between the frames as the picture between the steps) */
+        mesh_animate_all(g_anim_clock, g_lerp_on);   /* (between the frames as the picture between the steps) */
         smoke_dump();
         s2_render(&view, &sk);
         lerp_undo(lerped);
