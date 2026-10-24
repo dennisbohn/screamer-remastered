@@ -128,7 +128,7 @@ typedef struct {
     int   offset, avail, flat, kind, wrap, id;
     int   rank;                         /* (pass 0's draws, not the shaders') */
     int   layer;                        /* M3: the texture frame's colour layer, -1 none (FILTERING) */
-    int   pad;
+    int   fade;                         /* Screamer 2: its row of the distance table, -1 none */
 } gpu_rec;
 
 /* a corner, and whose: the triangle's number goes with each corner (no gl_PrimitiveID: one
@@ -191,8 +191,8 @@ typedef struct {
     int    cw, ch, c_stale;
     GLuint m_colour, m_index, m_zsw, m_id, m_depth, fbo0m, fbo1m;    /* MSAA's targets (the colour with FILTERING) */
     int    mw, mh, ms, m_rgb, ms_got;   /* their size, samples and colour asked for, the samples made */
-    GLuint pal_tex, smg_fit, lut_fit;   /* the scene's palette (256 x 1); SMG's rows and the darkenings as lines (rows_fit) */
-    uint32_t pal_now[256], smg_fit_sum;
+    GLuint pal_tex, smg_fit, lut_fit, fade_fit;   /* the scene's palette (256 x 1); SMG's rows, the darkenings, the distance table as lines (rows_fit) */
+    uint32_t pal_now[256], smg_fit_sum, fade_fit_sum;
     int    pal_set;
     float  fade, to_k;              /* the picture's fades (gpu_fades) */
     uint32_t to;
@@ -202,7 +202,7 @@ typedef struct {
     gpu_layer *layer_rec;
     int   *mat_first, *mat_frames, *frame_layer;
     int    nmat, nframe;
-    GLuint mlb_buf, mlb_tex, d2_buf, d2_tex, fl_buf, fl_tex, smg_tex;
+    GLuint mlb_buf, mlb_tex, d2_buf, d2_tex, fl_buf, fl_tex, smg_tex, fade_tex;
     gpu_rec *rec;                   /* by triangle, and its corners (C library memory) */
     gpu_corner *corner;
     long   rec_cap;
@@ -275,7 +275,7 @@ static const char *const g_scene_vertex_src =
     "struct tri_rec {\n" \
     "    float ax, ay, ia, diz, dizy, ua, duz, duzy, va, dvz, dvzy;\n" \
     "    float zbias, hw, gvy, eh;\n" \
-    "    int offset, avail, colour, kind, wrap, id, rank, layer, pad;\n" \
+    "    int offset, avail, colour, kind, wrap, id, rank, layer, fade;\n" \
     "};\n" \
     "layout(std430, binding = 0) readonly buffer tri_list { tri_rec tri[]; };\n" \
     "layout(binding = 0) uniform usamplerBuffer mlb;\n" \
@@ -318,8 +318,10 @@ static const char *const g_scene_vertex_src =
    holes by its level 0 (thin things stay thin far off) */
 static const char *const g_scene0_src =
     GPU_TEXEL_SRC
+    "layout(binding = 12) uniform usampler2D fade_tab;\n"     /* Screamer 2's distance table, a row a face */
     "#ifdef RGB\n"
     GPU_LIGHT_SRC
+    "layout(binding = 13) uniform sampler2D fade_fit;\n"      /* its rows as lines on the colours */
     "layout(binding = 1) uniform sampler2D pal;\n"
     "layout(binding = 10) uniform sampler2DArray frames;\n"
     "layout(binding = 11) uniform sampler2DArray frames_wrap;\n"
@@ -386,9 +388,15 @@ static const char *const g_scene0_src =
     "        c = vec4(enc(s.rgb / max(s.a, 1.0 / 255.0)), 1.0);\n"
     "    }\n"
     "    if (drop) discard;\n"
+    "    if (t.fade >= 0) {\n"                               /* the number through its row; a filtered colour through the row's line */
+    "        n = texelFetch(fade_tab, ivec2(int(n), t.fade), 0).r;\n"
+    "        if (t.colour < 0 && t.layer >= 0) c.rgb = texelFetch(fade_fit, ivec2(0, t.fade), 0).rgb * c.rgb + texelFetch(fade_fit, ivec2(1, t.fade), 0).rgb;\n"
+    "        else c = vec4(texelFetch(pal, ivec2(int(n), 0), 0).rgb, 1.0);\n"
+    "    }\n"
     "    o_colour = c; o_index = n; o_zsw = iz * t.zbias; o_id = t.id;\n"
     "#else\n"
     "    if (n == 256u || ((t.kind & 1) != 0 && n == 0u && !a2c)) discard;\n"
+    "    if (t.fade >= 0) n = texelFetch(fade_tab, ivec2(int(n), t.fade), 0).r;\n"
     "    o_index = n; o_zsw = iz * t.zbias; o_id = t.id;\n"
     "#endif\n"
     "    gl_FragDepth = iz * t.hw * 8.0;\n"
@@ -620,6 +628,7 @@ static const char *const g_layers_src =
     "    layer_rec r = L[g.z];\n"
     "    int x = g.x, y = g.y;\n"
     "    if ((r.kind & 4) == 0) { x = min(x, r.su - 1); y = min(y, r.sv - 1); }\n"
+    "    if ((r.kind & 16) != 0) { x &= 127; y &= 127; }\n"
     "    int o = y * 256 + x;\n"
     "    vec4 c = vec4(0.0);\n"
     "    if (o < r.avail) {\n"
@@ -1088,6 +1097,7 @@ static void scene_open(void)
     buffer_texture(&G->d2_buf, &G->d2_tex);
     buffer_texture(&G->fl_buf, &G->fl_tex);
     G->smg_tex = texture();
+    G->fade_tex = texture();
     G->scene_ok = G->GetError() == GL_NO_ERROR;
     if (G->scene_ok) colour_open();
 }
@@ -1141,6 +1151,7 @@ static void colour_open(void)
     G->TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 256, 1, 0, GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV, NULL);
     G->smg_fit = texture();
     G->lut_fit = texture();
+    G->fade_fit = texture();
     G->GenBuffers(1, &G->layer_buf);
     G->colour_ok = G->GetError() == GL_NO_ERROR;
     while (G->GetError() != GL_NO_ERROR) {}
@@ -1174,7 +1185,7 @@ static int layer_of(int offset, int avail, int su, int sv, int kind, int *hash, 
 {
     su = su < 1 ? 1 : su > 256 ? 256 : su;
     sv = sv < 1 ? 1 : sv > 256 ? 256 : sv;
-    kind &= GPU_KEYED | GPU_WRAPS;
+    kind &= GPU_KEYED | GPU_WRAPS | GPU_WRAP128;
     unsigned h = ((unsigned)offset * 2654435761u ^ (unsigned)(su * 977 + sv * 131 + kind)) % (unsigned)hash_n;
     for (;; h = (h + 1) % (unsigned)hash_n) {
         const int k = hash[h];
@@ -1189,7 +1200,7 @@ static int layer_of(int offset, int avail, int su, int sv, int kind, int *hash, 
     return G->nlayer++;
 }
 
-void gpu_materials(const uint8_t *bytes, long len, const gpu_mat *mat, int nmat, const int *frame_offset)
+void gpu_materials(const uint8_t *bytes, long len, const gpu_mat *mat, int nmat, const int *frame_offset, const int *frame_avail)
 {
     if (!gpu() || !G->scene_ok || !bytes || len <= 0) return;
     buffer_fill(G->mlb_buf, G->mlb_tex, GL_R8UI, bytes, len);
@@ -1213,7 +1224,7 @@ void gpu_materials(const uint8_t *bytes, long len, const gpu_mat *mat, int nmat,
         for (int f = 0; f < frames; f++) {
             const int o = frame_offset[mat[i].first + f];
             G->frame_layer[G->nframe++] = o >= 0 && o < len && !(mat[i].kind & GPU_GLASS)
-                ? layer_of(o, (int)(len - o), mat[i].su, mat[i].sv, mat[i].kind, hash, hash_n) : -1;
+                ? layer_of(o, frame_avail ? frame_avail[mat[i].first + f] : (int)(len - o), mat[i].su, mat[i].sv, mat[i].kind, hash, hash_n) : -1;
         }
     }
     free(hash);
@@ -1487,6 +1498,7 @@ static void draw_solid(int vk, int a, int b, int w, int h, int rw, int rows, flo
     G->DepthFunc(GL_GEQUAL);
     G->StencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
     G->BindVertexArray(G->vao3);
+    G->ActiveTexture(GL_TEXTURE12); G->BindTexture(GL_TEXTURE_2D, G->fade_tex);
     G->ActiveTexture(GL_TEXTURE0);
     G->BindTexture(GL_TEXTURE_BUFFER, G->mlb_tex);
     G->UseProgram(p->prog);
@@ -1497,6 +1509,7 @@ static void draw_solid(int vk, int a, int b, int w, int h, int rw, int rows, flo
         G->ActiveTexture(GL_TEXTURE1); G->BindTexture(GL_TEXTURE_2D, G->pal_tex);
         G->ActiveTexture(GL_TEXTURE10); G->BindTexture(GL_TEXTURE_2D_ARRAY, G->layers);
         G->ActiveTexture(GL_TEXTURE11); G->BindTexture(GL_TEXTURE_2D_ARRAY, G->layers);
+        G->ActiveTexture(GL_TEXTURE13); G->BindTexture(GL_TEXTURE_2D, G->fade_fit);
         G->ActiveTexture(GL_TEXTURE0);
     }
     for (int i = a, car = -1; i < b; ) {
@@ -1645,7 +1658,7 @@ int gpu_scene(const gpu_view *v, const gpu_tri *t, int n, uint8_t *fb, float *zb
         r->gvy = q->ground_vy; r->eh = q->eye_h;
         r->offset = q->offset; r->avail = q->avail; r->flat = q->flat; r->kind = q->kind;
         r->wrap = q->wrap_mask; r->id = id; r->rank = q->rank;
-        r->layer = -1; r->pad = 0;
+        r->layer = -1; r->fade = v->fade ? q->fade : -1;
         if (G->filter && q->flat < 0 && q->mat >= 0 && q->mat < G->nmat && G->mat_frames[q->mat] > 0)
             r->layer = G->frame_layer[G->mat_first[q->mat] + (q->frame >= 0 && q->frame < G->mat_frames[q->mat] ? q->frame : 0)];
         gpu_corner *c = &G->corner[(size_t)m * 3];
@@ -1677,6 +1690,16 @@ int gpu_scene(const gpu_view *v, const gpu_tri *t, int n, uint8_t *fb, float *zb
         for (int i = 0; i < 256 * v->smg_rows; i += 7) sum = sum * 31u + v->smg[i];
         for (int i = 0; i < 256; i++) sum = sum * 31u + G->pal_now[i];
         if (sum != G->smg_fit_sum) { rows_fit(G->smg_fit, v->smg, v->smg_rows, G->pal_now, 0); G->smg_fit_sum = sum; }
+    }
+    if (v->fade && v->fade_rows > 0) {               /* Screamer 2's distance table */
+        G->BindTexture(GL_TEXTURE_2D, G->fade_tex);
+        G->TexImage2D(GL_TEXTURE_2D, 0, GL_R8UI, 256, v->fade_rows, 0, GL_RED_INTEGER, GL_UNSIGNED_BYTE, v->fade);
+        if (G->filter) {
+            uint32_t sum = (uint32_t)v->fade_rows;
+            for (int i = 0; i < 256 * v->fade_rows; i += 7) sum = sum * 31u + v->fade[i];
+            for (int i = 0; i < 256; i++) sum = sum * 31u + G->pal_now[i];
+            if (sum != G->fade_fit_sum) { rows_fit(G->fade_fit, v->fade, v->fade_rows, G->pal_now, 0); G->fade_fit_sum = sum; }
+        }
     }
 
     /* the backdrop, and nothing in front of it yet */

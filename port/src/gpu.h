@@ -27,7 +27,7 @@ void   gpu_shape(int w, int h);         /* M4: the picture's size (fb's), shown 
 void   gpu_readback(int on);            /* the scene back into fb, zb and idb after it is drawn (tests, the developer's keys) */
 void   gpu_shot_next(const char *path); /* a test: the next picture shown also into a PPM, at its scene's size */
 /* M2: THE 3D SCENE ON THE CARD -- the triangles raster_job would fill, in the same order */
-enum { GPU_KEYED = 1, GPU_GLASS = 2, GPU_WRAPS = 4, GPU_SPRITE = 8 };
+enum { GPU_KEYED = 1, GPU_GLASS = 2, GPU_WRAPS = 4, GPU_SPRITE = 8, GPU_WRAP128 = 16 };   /* (WRAP128: Screamer 2's reflections' map) */
 typedef struct {
     float x[3], y[3], iz[3], u[3], v[3];    /* the corners: picture pixels, 1 / depth, texels */
     int   offset, avail;                    /* the texture frame's first byte in the material bytes, and the bytes from there */
@@ -39,6 +39,7 @@ typedef struct {
     int   mat, frame;                       /* M3: the material (gpu_materials' number) and its frame */
     float zbias;                            /* the whole factor on 1 / depth, material's and object's */
     float ground_vy, eye_h;                 /* a sprite's (over_ground) */
+    int   fade;                             /* Screamer 2: its row of the view's distance table, -1 none */
 } gpu_tri;
 
 /* M3: the backdrop as sky_paint lays it, for the card to draw at its own size (sky_paint's
@@ -64,6 +65,8 @@ typedef struct {
     int    tie_rule;
     const gpu_sky *sky;                     /* M3: drawn by the card when the scene is larger than fb (NULL: fb's picture) */
     const uint32_t *pal;                    /* M3: the palette fb's numbers are of (the scene's colours) */
+    const uint8_t *fade;                    /* Screamer 2: the distance table (night, fog), 256 a row; NULL none */
+    int    fade_rows;
 } gpu_view;
 
 /* M3: a material: its kind (GPU_KEYED, GLASS, WRAPS), its extent in texels and its frames' first
@@ -71,8 +74,9 @@ typedef struct {
 typedef struct { int kind, su, sv, frames, first; } gpu_mat;
 
 int  gpu_scene_ready(void);                                 /* the scene's shaders are there */
-/* the track's material bytes (MAPn.MLB as loaded) and its materials */
-void gpu_materials(const uint8_t *bytes, long len, const gpu_mat *mat, int nmat, const int *frame_offset);
+/* the material bytes (the libraries as loaded, one after another) and the materials; frame_avail:
+   each frame's bytes up to its library's end (NULL: up to len) */
+void gpu_materials(const uint8_t *bytes, long len, const gpu_mat *mat, int nmat, const int *frame_offset, const int *frame_avail);
 /* fb holds the backdrop; fb, zb and idb come back as raster_job would have left them (a scene
    drawn larger: as it is at their pixels' middles).  1: the card's own scene is what is shown
    (drawn larger, FILTERING, MSAA), and the flat things go over it (gpu_overlay) */

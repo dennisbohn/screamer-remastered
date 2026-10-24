@@ -25,7 +25,8 @@ The software renderer is the fall-back, nothing to choose in the menus:
 | M3 | FILTERING (a true-colour scene, its textures filtered) and MSAA 2X / 4X / 8X, both on the GRAPHICS page, off by default | done |
 | M4 | 16:9 and wider: Screamer's races as wide as the window, the flat things at its edges, the cockpit's sides drawn out, ASPECT WIDE / 4:3 (main.c `pic_follow`, `g_ox`, `cockpit_widen`) | done |
 | M5 | draw distance (far plane, keep range, animations started as far as is drawn) | put back: ULTRA is enough for now |
-| M6 | interpolation between the 50 Hz physics steps | later |
+| M6 | interpolation between the 50 Hz physics steps | done (main.c `lerp_apply`) |
+| S2 | Screamer 2's race scene on the card: every material library in one block, the distance table (night, fog) a row a face, the reflections' map wrapping at 128; the mirror by the software | done |
 
 ## The picture's size (M3)
 
@@ -178,6 +179,8 @@ What still differs from the software renderer, by design:
 - `OS_GPUTIME=1`: the card's own time for the backdrop, the faces, the read-back and showing the
   picture, the mean of 120 pictures (timestamp queries).
 - `OS_GPUPUFFS=1`: the scenes with smoke in them (how many of the puffs' triangles).
+- Screamer 2: `OS_RENDERER=software|gpu OS_READBACK=1 OS_UVRUN=1 OS_S2RUN=<frames> ... -game 2
+  build/dec/MAPn n --shot f.ppm 1` -- the same picture from both, read back.
 
 On Windows 11 with an RX 9070 XT (2026-10-23):
 
@@ -214,3 +217,7 @@ On Windows 11 with an RX 9070 XT (2026-10-23):
   (`OS_GPUTIME`), both off: backdrop 0.24, faces 0.32, read back 0.77, shown 0.04 ms -- the
   read-back is the most of it. The textures' colour layers take about 190 MB, MSAA 8X's targets
   at that size about 0.9 GB.
+- Screamer 2 on the card (2026-10-24): the same one-frame picture from both renderers, read back
+  (`OS_UVRUN=1`), all seven tracks by day, night and fog, with the mirror, the dashboard view:
+  0.006 to 0.024 % of the pixels differ, single pixels at edges. Looked at as shown, twice as
+  large, with FILTERING and MSAA: the race screen, the mirror, the end's screen, the fog.

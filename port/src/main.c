@@ -224,6 +224,7 @@ static const uint32_t *show_palette(void)
  */
 static int      g_s2_cond;
 static int      g_fade_on;
+static int      g_soft_scene;           /* the next scene by raster_job, not the card (Screamer 2's mirror) */
 static float    g_fade_near, g_fade_far;
 static uint8_t  g_dpt[65536];
 static const uint8_t *g_fade_row;       /* the face being drawn: its row of the table, or NULL */
@@ -1046,7 +1047,22 @@ static int      g_nmat;
 static uint8_t *g_mlb;
 #ifdef OS_GPU
 static long     g_mlb_len;
-static int      g_gpu_mlb_sent;         /* g_mlb is on the card (gpu_materials) */
+static int      g_gpu_mlb_sent;         /* the libraries are on the card (gpu_materials) */
+/* the libraries read (Screamer 2: the track's, each car's, the reflections', MISC's): the card has
+   them one after another (gpu_send_materials); lib_at is where a byte of one of them is there */
+#define LIB_MAX 24
+static struct { const uint8_t *buf; long len, at; } g_lib[LIB_MAX];
+static int      g_nlib;
+static uint8_t *g_lib_pool;
+static long lib_at(const uint8_t *p, long *end)
+{
+    for (int i = 0; i < g_nlib; i++)
+        if (p >= g_lib[i].buf && p < g_lib[i].buf + g_lib[i].len) {
+            if (end) *end = g_lib[i].at + g_lib[i].len;
+            return g_lib[i].at + (long)(p - g_lib[i].buf);
+        }
+    return -1;
+}
 #endif
 
 static int32_t rd32(const uint8_t *p)
@@ -1095,7 +1111,9 @@ static int mlb_read(const char *path, int base)
     fclose(f);
     if (base == 0) g_mlb = buf;
 #ifdef OS_GPU
-    if (base == 0) { g_mlb_len = len; g_gpu_mlb_sent = 0; }
+    if (base == 0) { g_mlb_len = len; g_nlib = 0; }
+    if (g_nlib < LIB_MAX) { g_lib[g_nlib].buf = buf; g_lib[g_nlib].len = len; g_nlib++; }
+    g_gpu_mlb_sent = 0;
 #endif
 
     /* the material table runs up to the first texture record */
@@ -1796,12 +1814,13 @@ static void gpu_list(const tri_job *j)
     if (fr < 0 || fr >= pm->levels) fr = 0;
     gpu_tri *t = &g_gpu_tri[g_gpu_tri_n];
     const uint8_t *page = pm->frame[fr];
-    const int on_card = page && page >= g_mlb && page < g_mlb + g_mlb_len;
+    const long at = page ? lib_at(page, NULL) : -1;
+    const int on_card = at >= 0;
     if (!on_card && j->flat < 0) {
         static int told;
-        if (!told++) fprintf(stderr, "gpu: a texture from another material file: not on the card, not drawn\n");
+        if (!told++) fprintf(stderr, "gpu: a texture from a material file the card has not: not drawn\n");
     }
-    t->offset = on_card ? (int)(page - g_mlb) : 0;
+    t->offset = on_card ? (int)at : 0;
     t->avail = on_card ? (int)pm->frame_avail[fr] : 0;
     t->flat = j->flat;
     t->kind = (m->type == 64 ? GPU_KEYED : 0) | (m->type == 224 ? GPU_GLASS : 0) |
@@ -1811,6 +1830,7 @@ static void gpu_list(const tri_job *j)
     t->mat = on_card ? (int)(pm - g_mat) : -1; t->frame = fr;
     t->zbias = (m->type == 64 ? 1.002f : m->type == 160 ? 0.998f : 1.0f) * j->zbias;    /* (raster_job's) */
     t->ground_vy = j->ground_vy; t->eye_h = j->eye_h;
+    t->fade = j->fade && m->type != 224 ? (int)((j->fade - g_dpt) / 256) : -1;     /* (raster_job: not for glass) */
     t->x[0] = j->ax; t->y[0] = j->ay; t->iz[0] = j->ia; t->u[0] = j->au; t->v[0] = j->av;
     t->x[1] = j->bx; t->y[1] = j->by; t->iz[1] = j->ib; t->u[1] = j->bu; t->v[1] = j->bv;
     t->x[2] = j->cx; t->y[2] = j->cy; t->iz[2] = j->ic; t->u[2] = j->cu; t->v[2] = j->cv;
@@ -1825,23 +1845,36 @@ static void gpu_send_materials(void)
     g_gpu_mlb_sent = 1;
     int nf = 0;
     for (int i = 0; i < g_nmat; i++) nf += g_mat[i].levels > 0 ? g_mat[i].levels : 0;
+    long total = 0;
+    for (int i = 0; i < g_nlib; i++) { g_lib[i].at = total; total += g_lib[i].len; }
+    free(g_lib_pool); g_lib_pool = NULL;
+    const uint8_t *bytes = g_mlb;
+    if (g_nlib > 1 && (g_lib_pool = malloc((size_t)total))) {
+        for (int i = 0; i < g_nlib; i++) memcpy(g_lib_pool + g_lib[i].at, g_lib[i].buf, (size_t)g_lib[i].len);
+        bytes = g_lib_pool;
+    } else if (g_nlib > 1) g_nlib = 1;              /* (no room: the first library alone) */
+    if (g_nlib <= 1) total = g_mlb_len;
     gpu_mat *mat = malloc(sizeof *mat * (size_t)(g_nmat + 1));
-    int *off = malloc(sizeof *off * (size_t)(nf + 1));
-    if (!mat || !off) { free(mat); free(off); gpu_materials(g_mlb, g_mlb_len, NULL, 0, NULL); return; }
+    int *off = malloc(sizeof *off * (size_t)(nf + 1)), *avail = malloc(sizeof *avail * (size_t)(nf + 1));
+    if (!mat || !off || !avail) { free(mat); free(off); free(avail); gpu_materials(bytes, total, NULL, 0, NULL, NULL); return; }
     nf = 0;
     for (int i = 0; i < g_nmat; i++) {
         const material *m = &g_mat[i];
         gpu_mat *q = &mat[i];
-        q->kind = (m->type == 64 ? GPU_KEYED : 0) | (m->type == 224 ? GPU_GLASS : 0) | (m->type == 160 ? GPU_WRAPS : 0);
+        q->kind = (m->type == 64 ? GPU_KEYED : 0) | (m->type == 224 ? GPU_GLASS : 0) | (m->type == 160 ? GPU_WRAPS : 0) |
+                  (i == g_env_mat ? GPU_WRAPS | GPU_WRAP128 : 0);    /* (Screamer 2's reflections' map, read by routine 160) */
         q->su = m->su; q->sv = m->sv; q->first = nf; q->frames = 0;
         for (int fr = 0; fr < m->levels && m->page && m->type != 128 && m->type != 224; fr++) {
             const uint8_t *page = m->frame[fr];
-            off[nf + q->frames++] = page && page >= g_mlb && page < g_mlb + g_mlb_len ? (int)(page - g_mlb) : -1;
+            long end = 0;
+            const long at = page ? lib_at(page, &end) : -1;
+            off[nf + q->frames] = (int)at;
+            avail[nf + q->frames++] = at >= 0 ? (int)(end - at) : 0;
         }
         nf += q->frames;
     }
-    gpu_materials(g_mlb, g_mlb_len, mat, g_nmat, off);
-    free(mat); free(off);
+    gpu_materials(bytes, total, mat, g_nmat, off, avail);
+    free(mat); free(off); free(avail);
 }
 
 /* M3: the size the card draws the scene at -- the window's 4:3 part, with RES's rows if it has more
@@ -1907,7 +1940,7 @@ static void menu3d_end(void)
     const int own = g_have_smg || !glass;
     const gpu_view v = { FB_W, FB_H, g_vh, g_gpu_rw, g_gpu_rh, g_cy, g_focal_y, g_obj_d2, g_obj_carpet, g_obj_ground,
                          (int)(sizeof g_obj_d2 / sizeof g_obj_d2[0]), own ? g_smg : mix_table(), own ? g_smg_rows : 256, !own,
-                         g_tie_rule, NULL, g_pal };
+                         g_tie_rule, NULL, g_pal, NULL, 0 };
     g_lay_want = gpu_scene(&v, g_gpu_tri, g_gpu_tri_n, fb, zb, idb);
     g_gpu_tri_n = 0; g_gpu_scene = 0; g_tri_listing = 0;
     g_cull_fx = g_cull_fy = 1.0f;
@@ -2664,8 +2697,9 @@ static void render_scene(const camera *cam, const sky *s)
         mesh_animate_all(g_anim_clock, 0);
     }
 #ifdef OS_GPU
-    /* M2: Screamer's scene on the card (OS_GPU3D=0: still raster_job, for comparing) */
-    if (gpu_active() && os_game() == 1 && g_scene && g_mlb && g_have_smg && g_fog <= 0.0f && !g_fade_on &&
+    /* M2: the race's scene on the card (OS_GPU3D=0: still raster_job, for comparing; Screamer 2's
+       mirror is drawn by raster_job, g_soft_scene) */
+    if (gpu_active() && !g_soft_scene && g_scene && g_mlb && g_have_smg && g_fog <= 0.0f &&
         !(getenv("OS_GPU3D") && !atoi(getenv("OS_GPU3D")))) {
         gpu_send_materials();
         g_gpu_scene = gpu_scene_ready();
@@ -2744,9 +2778,11 @@ static void render_scene(const camera *cam, const sky *s)
             sky.top = g_cy / sky.sy + (22.0f - (float)s->h) + g_focal_y / sky.sy * sinf(cam->pitch);
         }
         sky.ground = g_ground_colour >= 0 ? g_ground_colour : pal_near(COL_GROUND);
-        sky.clear = getenv("OS_SKYMARK") ? pal_near(0xff00ff) : pal_near(COL_SKY_FALLBACK);
+        sky.clear = getenv("OS_SKYMARK") ? pal_near(0xff00ff)
+                  : os_game() == 2 && g_ground_colour >= 0 ? g_ground_colour : pal_near(COL_SKY_FALLBACK);   /* (sky_paint's) */
         const gpu_view v = { FB_W, FB_H, g_vh, g_gpu_rw, g_gpu_rh, g_cy, g_focal_y, g_obj_d2, g_obj_carpet, g_obj_ground,
-                             (int)(sizeof g_obj_d2 / sizeof g_obj_d2[0]), g_smg, g_smg_rows, 0, g_tie_rule, &sky, g_pal };
+                             (int)(sizeof g_obj_d2 / sizeof g_obj_d2[0]), g_smg, g_smg_rows, 0, g_tie_rule, &sky, g_pal,
+                             g_fade_on ? g_dpt : NULL, 256 };
         g_lay_want = gpu_scene(&v, g_gpu_tri, g_gpu_tri_n, fb, zb, idb);      /* (shown as the card drew it) */
         g_gpu_tri_n = 0;
         g_gpu_scene = 0;
@@ -4014,8 +4050,9 @@ static void s2_camera_show(camera *cam, float t)
 /*
  * THE MIRROR (s2_hooks.c s2_mirror has what the game does).  The port draws the mirror's
  * scene first, into the top rows of the picture, keeps it squeezed and turned round, draws
- * the picture itself, and then lays the kept strip and its frame over it.  R turns it on and
- * off (OS_S2MIRROR=1 starts with it on); the game has it as an option of its menu.
+ * the picture itself, and then lays the kept strip and its frame over it (s2_mirror_lay, with
+ * the flat things: the mirror's scene is raster_job's, the picture's maybe the card's).  R turns
+ * it on and off (OS_S2MIRROR=1 starts with it on); the game has it as an option of its menu.
  */
 static int g_s2_mirror_have, g_s2_mirror_w, g_s2_mirror_h;
 static uint8_t  g_s2_mirror_px[(FB_MAXW / 2) * 100];
@@ -4040,7 +4077,9 @@ static void s2_render(const camera *cam, const sky *sk)
         g_vh = s2_screen_hi() ? m.rows : m.rows * LAY_S; g_cy = EYE_LINE * (float)g_vh;
         g_hide = g_s2_obj[s2_player()];                       /* (0x2b6b4: the car and its shadow are not in it) */
         if (g_s2_shadow[0]) { shadow_z = g_s2_shadow[0]->z; g_s2_shadow[0]->z = -1.0e6f; }
+        g_soft_scene = 1;
         render_frame(&mc, sk);
+        g_soft_scene = 0;
         g_s2_mirror_w = FB_W / 2; g_s2_mirror_h = g_vh;
         for (int y = 0; y < g_s2_mirror_h && y < 100; y++)
             for (int x = 0; x < g_s2_mirror_w; x++)
@@ -4050,15 +4089,22 @@ static void s2_render(const camera *cam, const sky *sk)
         g_hide = hid; g_vh = vh; g_cy = cy;
     }
     render_frame(cam, sk);
-    if (g_s2_mirror_have) {
-        /* (the mirror is with the top's things in a taller picture) */
-        const int x0 = 80 * LAY_S, y0 = 14 * LAY_S;
-        for (int y = 0; y < g_s2_mirror_h && y0 + y < FB_H; y++)
-            for (int x = 0; x < g_s2_mirror_w && x0 + x < FB_W; x++)
-                fb[(y0 + y) * FB_W + x0 + x] = g_s2_mirror_px[y * (FB_MAXW / 2) + x];
-        if (g_s2_mirror_frame_ok < 0) { g_s2_mirror_frame_ok = pkc_load(s2_screen_hi() ? "build/dec/GAME1/MIRROR_H.PKC" : "build/dec/GAME1/MIRROR_L.PKC", g_s2_mirror_frame); g_pkc_loads++; }
-        if (g_s2_mirror_frame_ok > 0) { pkc_draw(g_s2_mirror_frame); }
+}
+
+/* the kept mirror and its frame over the picture: the first of the flat things (after lay_begin) */
+static void s2_mirror_lay(void)
+{
+    if (!g_s2_mirror_have) return;
+    /* (the mirror is with the top's things in a taller picture) */
+    const int x0 = 80 * LAY_S, y0 = 14 * LAY_S;
+    for (int y = 0; y < g_s2_mirror_h && y0 + y < FB_H; y++) {
+        uint8_t *row = fb + (y0 + y) * FB_W + x0;
+        int x = 0;
+        for (; x < g_s2_mirror_w && x0 + x < FB_W; x++) row[x] = g_s2_mirror_px[y * (FB_MAXW / 2) + x];
+        LAY_RUN(row, x);
     }
+    if (g_s2_mirror_frame_ok < 0) { g_s2_mirror_frame_ok = pkc_load(s2_screen_hi() ? "build/dec/GAME1/MIRROR_H.PKC" : "build/dec/GAME1/MIRROR_L.PKC", g_s2_mirror_frame); g_pkc_loads++; }
+    if (g_s2_mirror_frame_ok > 0) { pkc_draw(g_s2_mirror_frame); }
 }
 
 /* the path sample nearest a point -- "where on the lap am I?" */
@@ -6886,7 +6932,7 @@ static void s2_dark_box(int x, int y, int w, int h)
     x &= ~3; w &= ~3;
     for (int yy = y * LAY_S; yy < (y + h) * LAY_S && yy < FB_H; yy++)
         for (int xx = x * LAY_S; xx < (x + w) * LAY_S && xx < FB_W; xx++) {
-            fb[yy * FB_W + xx] = dark[fb[yy * FB_W + xx]];
+            lay_dark(yy * FB_W + xx, dark);
         }
 }
 
@@ -6978,7 +7024,7 @@ static void s2_dash_draw(const s2_hud_state *h)
     }
     /* (the scene stops at the view's rows; where the picture is open below them -- a few
        pixels at its upper edge -- the port leaves black: its own) */
-    if (g_vh < FB_H) memset(fb + g_vh * FB_W, pal_near(0), (size_t)((FB_H - g_vh) * FB_W));
+    if (g_vh < FB_H) { memset(fb + g_vh * FB_W, pal_near(0), (size_t)((FB_H - g_vh) * FB_W)); LAY_RUN(fb + g_vh * FB_W, (FB_H - g_vh) * FB_W); }
     if (g_s2_cock_ok) pkc_draw(g_s2_cock);
     const int gear = h->gear < 0 ? 0 : h->gear > 4 ? 4 : h->gear;
     if (s2_screen_hi()) hud_sprite_px(r[12 + gear * 2], r[13 + gear * 2], h->dash * 5 + 0x46 + gear);
@@ -7022,10 +7068,10 @@ static void s2_attract_fill(uint32_t to, float k)      /* every pixel k of the w
 static void s2_attract_draw(float dt)
 {
     if (g_s2_att.stage == 0) {
-        memset(fb, 0, FB_BYTES);
+        memset(fb, 0, FB_BYTES); LAY_RUN(fb, FB_BYTES);
         g_s2_att.group = 2; g_s2_att.stage = 1; g_s2_att.x = s2_screen_hi() ? 2000.0f : 1000.0f; g_s2_att.pause = 0.0f;
     } else if (g_s2_att.stage < 3) {
-        memset(fb, 0, FB_BYTES);
+        memset(fb, 0, FB_BYTES); LAY_RUN(fb, FB_BYTES);
         /* (a taller picture: the title cards in the middle) */
         const int n = g_s2_att.stage + 0x6d;
         if (n < g_nspr) {
@@ -7119,7 +7165,7 @@ static void s2_pause_open(void)
 static void s2_pause_line(int x0, int y0, int y1, int colour)
 {
     for (int y = y0 * LAY_S; y < (y1 + 1) * LAY_S && y < FB_H; y++)
-        for (int x = x0 * LAY_S; x < x0 * LAY_S + LAY_S && x < FB_W; x++) fb[y * FB_W + x] = (uint8_t)colour;
+        for (int x = x0 * LAY_S; x < x0 * LAY_S + LAY_S && x < FB_W; x++) { fb[y * FB_W + x] = (uint8_t)colour; LAY_PUT(y * FB_W + x); }
 }
 
 static void s2_pause_draw(float dt)
@@ -12093,6 +12139,7 @@ static int session(int argc, char **argv)
         if (getenv("OS_YAW"))   cam.yaw   += (float)atof(getenv("OS_YAW")) * (float)M_PI / 180.0f;
         if (getenv("OS_PITCH")) cam.pitch  = (float)atof(getenv("OS_PITCH")) * (float)M_PI / 180.0f;
         s2_render(&cam, &sk);
+        s2_mirror_lay();
         if (g_s2_on && getenv("OS_S2RUN") && !getenv("OS_NOHUD") && !getenv("OS_S2ORBIT")) {
             if (getenv("OS_S2SPRITES")) {             /* a test: the sprites from number n on, each with its number */
                 int n = atoi(getenv("OS_S2SPRITES")), x = 4, y = 4, tall = 0;
@@ -12788,6 +12835,7 @@ static int session(int argc, char **argv)
                     fb[y * FB_W + x] = fb[(FB_H - 1 - y) * FB_W + x]; fb[(FB_H - 1 - y) * FB_W + x] = t;
                 }
         lay_begin((g_cheat & 0x10 ? 1 : 0) | (g_cheat & 0x20 ? 2 : 0));       /* (M3: a scene drawn larger) */
+        s2_mirror_lay();
         if (g_intro) {
             intro_draw();
             if (getenv("OS_INTRO_TEST")) {       /* a picture every 2.5 s, eight of them, then stop */
