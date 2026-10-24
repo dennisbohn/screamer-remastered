@@ -11777,9 +11777,11 @@ static int session(int argc, char **argv)
         int td[11];
         snprintf(path_, sizeof path_, "%s/MAP%dDAT.DTR", data, track);
         if (s2_track_data(path_, td)) {
-            /* how far: TRACK_DATA's depth at the top detail, 0.8 of it below (0x2efca) */
-            if (g_detail != 3 && !getenv("OS_DRAWDIST")) {
-                g_far_z = (float)(int)((float)-td[0] * (g_detail == 2 ? 1.0f : 0.8f));
+            /* how far: TRACK_DATA's depth at the top detail, 0.8 of it below (0x2efca) -- the game's
+               own always, ULTRA too: its tracks are made for it (beyond it the far pieces hang over
+               nothing, the sky under them: Egypt's bridge from the valley before the town) */
+            if (!getenv("OS_DRAWDIST")) {
+                g_far_z = (float)(int)((float)-td[0] * (g_detail >= 2 ? 1.0f : 0.8f));
                 g_drawdist = g_far_z * 1.2f > DRAWDIST_ORIGINAL ? g_far_z * 1.2f : DRAWDIST_ORIGINAL;   /* (the port's: pieces looked at) */
                 printf("Screamer 2 track %d: drawn to a depth of %.0f\n", track, g_far_z);
             }
