@@ -1,33 +1,30 @@
 # Screamer Remastered
 
-A remaster of *Screamer* (1995) and *Screamer 2* (1996), optimised for today's PCs.
+A remaster of *Screamer* (1995), optimised for today's PCs.
 
 Built on [OpenScreamer](https://github.com/ItsDanik/openscreamer) by Danik. This project goes
 its own way: it is not affiliated with OpenScreamer and does not run on the MiSTer. Please
-report problems here, not to OpenScreamer.
+report problems here, not to OpenScreamer. *Screamer 2* (1996) runs too, as in OpenScreamer,
+without the changes below.
 
 **Beta.** `screamer-remastered --version` prints the version.
 
-## What is new
+## What differs from the original
 
 - Rendering on the graphics card (OpenGL 4.5), resolution up to your screen's
+- 16:9 and wider, the instruments at the edges, or 4:3
+- Texture filtering and MSAA (2x / 4x / 8x), switchable
+- Smooth motion on high refresh rates
+- The whole track drawn, as far as it goes
 - Window or borderless full screen
 - Options in DISPLAY, GRAPHICS and AUDIO
-- Texture filtering and MSAA (2x / 4x / 8x), switchable
-- 16:9 and wider, the instruments at the edges, or 4:3 (*Screamer*)
-- Smooth motion on high refresh rates (*Screamer*)
-- *Screamer*'s CD music from GOG's disc image
-- Fixes: wheels showing through the body, front wheels steering the wrong way, the track's
-  detail set, text spacing at 640 x 400, palette colours on Windows
-
-**Planned:** smooth motion for *Screamer 2*. *Screamer 2* is playable as in OpenScreamer, at
-640 x 400; the improvements are for *Screamer* for now.
+- The CD music straight from GOG's disc image, no disc needed
 
 ## You need the original games
 
-No game files are included. Both games are still sold (GOG, Steam). Point the program at the
-folder that holds `DATA` and `GFX`, e.g. `screamer-remastered -data "C:\GOG Games\Screamer"`, or copy
-the folders next to the program as `screamer` and `screamer2`.
+No game files are included. *Screamer* is still sold (GOG, Steam). Point the program at the
+folder that holds `DATA` and `GFX`, e.g. `screamer-remastered -data "C:\GOG Games\Screamer"`, or
+copy the folder next to the program as `screamer` (*Screamer 2*'s as `screamer2`).
 
 The CD music is played from GOG's disc image. Alternatively, put `track_02.ogg`, `track_03.ogg`
 ... (or `.mp3` / `.wav`) into a `music` folder inside the game's folder.
