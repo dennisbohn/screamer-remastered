@@ -2620,6 +2620,11 @@ labels and figures at the same places; Screamer 1's high resolution (two tracks,
 unchanged; low resolution unchanged (the quick check and the 13 menu pages). `-res low|high`
 chooses it for one run; the one kept is still Screamer's OPTIONS (`screamer-remastered.cfg`).
 
+**2026-10-25, Screamer Remastered: the line is GRAPHICS now** -- with 320 x 200 gone it opens a
+page of the port's settings (`s2m_graphics`, drawn as the options page: RESOLUTION, DISPLAY, ASPECT,
+FILTERING, MSAA, BACK; main.c `os_set_*`, at once and saved); the restart below is gone,
+`OS_S2MGOTO=options` is left as a test. What follows is how it was.
+
 **A RESOLUTION line in the game's settings (2026-10-16, Danik: "add a switch for resolution in
 game settings, above 'detail level'").** The port's own, on the options page (`0x420c0`): its
 rows are now 0 TRANSMISSION, 1 RESOLUTION (`:320X200` / `:640X400`, the words written into the
