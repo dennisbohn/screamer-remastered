@@ -23,8 +23,7 @@ without the changes below.
 ## You need the original games
 
 No game files are included. *Screamer* is still sold (GOG). The program finds an installed
-copy by itself, where its installer recorded it, or put it (with `SDL2.dll`) into the game's
-folder. Otherwise give it the folder that holds `DATA` and `GFX`:
+copy by itself, where its installer recorded it, or put it into the game's folder. Otherwise give it the folder that holds `DATA` and `GFX`:
 `screamer-remastered --data "D:\Games\Screamer"`.
 
 The CD music is played from GOG's disc image. Alternatively, put `track_02.ogg`, `track_03.ogg`
@@ -35,12 +34,13 @@ The CD music is played from GOG's disc image. Alternatively, put `track_02.ogg`,
 Windows, with [MSYS2](https://www.msys2.org/) (UCRT64):
 
 ```sh
-pacman -S mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-cmake mingw-w64-ucrt-x86_64-ninja mingw-w64-ucrt-x86_64-SDL2
+pacman -S mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-cmake mingw-w64-ucrt-x86_64-ninja
 cmake -S port -B port/build && cmake --build port/build
 port/build/screamer-remastered -data "C:/GOG Games/Screamer"
 ```
 
-Linux: SDL2, CMake and a C compiler (untested).
+The build fetches SDL2's source once and links a trimmed SDL into the program, so it needs no
+DLL. Linux: SDL2, CMake and a C compiler (untested).
 
 `screamer-remastered --help` lists options and keys. Settings and saves go to
 `%APPDATA%\screamer-remastered` (the files of an earlier OpenScreamer are taken over once).

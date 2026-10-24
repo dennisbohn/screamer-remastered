@@ -23,6 +23,8 @@ What changed from OpenScreamer (2026-10-23..24; the details in `docs/GPU.md` and
   `LAY_RUN` -- a new routine that writes into fb must mark its pixels, or the card's scene covers
   them); MSAA shaded once a pixel, keyed edges by alpha to coverage.
 - No DETAIL option: always ULTRA with the H set (`OS_DETAIL` for tests).
+- One program on Windows, no SDL2.dll: a trimmed SDL linked in (`port/sdl_lean.cmake`, 1.8 MB
+  in all); the state restore takes only the statics between `os_begin.c` and `os_end.c`.
 - The picture between two 50 Hz steps (`lerp_apply`), OPTIONS as DISPLAY / GRAPHICS / AUDIO, the CD
   music from GOG's disc image, the program's own name and home (`screamer-remastered`, the old
   OpenScreamer home taken over once).
@@ -212,9 +214,10 @@ overwrite records, ghosts and the name. `screamer-remastered --help` lists optio
 
 **Design:** 320×200 software framebuffer of palette numbers, 8 bits a pixel as the game's
 own (since 2026-10-16; shown through `g_pal` with the fades as palette fades: `show_palette`)
-(HIGH = 640×400, the game's two sets, both shown 4:3; `OS_TALL` / `OS_WIDE` are the MiSTer's sizes); SDL2, linked **dynamically**
-(the state restore between parts puts the program's `.data` / `.bss` back — a static SDL
-would be inside it; on Windows SDL2 must stay a DLL); a depth buffer, not the engine's
+(HIGH = 640×400, the game's two sets, both shown 4:3; `OS_TALL` / `OS_WIDE` are the MiSTer's sizes); SDL2 (Windows: built from
+its source without what the program does not use and linked in, `port/sdl_lean.cmake`; the state
+restore between parts puts back only the statics between `os_begin.c`'s and `os_end.c`'s marks,
+the first and last of the program's files, so SDL's are left alone); a depth buffer, not the engine's
 painter's sort; fixed 50 Hz physics; triangles filled by two threads.
 Lens: `screen = centre + coord × 128 / depth`, eye line 65 % down. 1 m = 328 units.
 One process: `main()` loops over `session()`; parts hand over with `os_next` / `os_go`.

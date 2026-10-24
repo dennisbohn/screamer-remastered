@@ -63,16 +63,9 @@ typedef struct {
 } keep;
 static keep *K;
 
-/* the program's own writable statics: GNU ld gives their ends these names */
-#if defined(_WIN32)
-extern char __data_start__[], __data_end__[], __bss_start__[], __bss_end__[];
-#define __data_start __data_start__
-#define _edata       __data_end__
-#define __bss_start  __bss_start__
-#define _end         __bss_end__
-#else
-extern char __data_start[], _edata[], __bss_start[], _end[];
-#endif
+/* the program's own writable statics: between the marks of os_begin.c and os_end.c (the
+   libraries' -- SDL's, the C library's -- lie outside them and are left alone) */
+extern char os_data_begin[], os_data_end[], os_bss_begin[], os_bss_end[];
 
 #ifdef _WIN32
 static void win_fatal(const char *text);
@@ -799,7 +792,7 @@ void os_init(int argc, char **argv)
                         "folders), or say where it is with -data DIR.\n", K->data);
 #ifdef _WIN32
         win_fatal("The game was not found.\n\nScreamer Remastered needs a copy of the original Screamer: put "
-                  "screamer-remastered.exe and SDL2.dll into the game's folder (the one that holds DATA and GFX), "
+                  "screamer-remastered.exe into the game's folder (the one that holds DATA and GFX), "
                   "or start it with -data and that folder.");
 #endif
         exit(1);
@@ -946,13 +939,13 @@ void *os_realloc(void *p, size_t n)
 void os_state_save(void)
 {
     keep *k = K;
-    k->data_len = (size_t)(_edata - __data_start);
+    k->data_len = (size_t)(os_data_end - os_data_begin);
     k->data_copy = malloc(k->data_len ? k->data_len : 1);
-    memcpy(k->data_copy, __data_start, k->data_len);
+    memcpy(k->data_copy, os_data_begin, k->data_len);
     /* the zero-filled statics: a handful of words are not zero already (the
        C library's stdout / stderr, and this file's own K) -- note which */
-    uintptr_t *w = (uintptr_t *)(((uintptr_t)__bss_start + sizeof(uintptr_t) - 1) & ~(sizeof(uintptr_t) - 1));
-    uintptr_t *end = (uintptr_t *)((uintptr_t)_end & ~(sizeof(uintptr_t) - 1));
+    uintptr_t *w = (uintptr_t *)(((uintptr_t)os_bss_begin + sizeof(uintptr_t) - 1) & ~(sizeof(uintptr_t) - 1));
+    uintptr_t *end = (uintptr_t *)((uintptr_t)os_bss_end & ~(sizeof(uintptr_t) - 1));
     size_t n = 0, cap = 64;
     k->bss_at = malloc(cap * sizeof *k->bss_at);
     k->bss_val = malloc(cap * sizeof *k->bss_val);
@@ -977,9 +970,9 @@ void os_state_restore(void)
         b->magic = 0;
         free(b);
     }
-    memcpy(__data_start, k->data_copy, k->data_len);
-    memset(__bss_start, 0, (size_t)(_end - __bss_start));
-    uintptr_t *w = (uintptr_t *)(((uintptr_t)__bss_start + sizeof(uintptr_t) - 1) & ~(sizeof(uintptr_t) - 1));
+    memcpy(os_data_begin, k->data_copy, k->data_len);
+    memset(os_bss_begin, 0, (size_t)(os_bss_end - os_bss_begin));
+    uintptr_t *w = (uintptr_t *)(((uintptr_t)os_bss_begin + sizeof(uintptr_t) - 1) & ~(sizeof(uintptr_t) - 1));
     for (size_t i = 0; i < k->bss_n; i++) w[k->bss_at[i]] = k->bss_val[i];
 }
 
