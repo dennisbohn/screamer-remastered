@@ -36,7 +36,7 @@ void snd_masters(float effects, float music);   /* 1 = the game's starting level
 int  snd_open(void);                   /* the device is open (or the test's WAV file) */
 void snd_forget(void);                 /* every sample let go, the device left open (the CD's song plays on) */
 
-/* Screamer 2's CD songs as files (cdaudio.c): track_NN.ogg / .mp3 / .wav */
+/* the CD's songs (cdaudio.c): files track_NN.ogg / .mp3 / .wav, or the disc's own image */
 int  snd_cd(int track, int loop);      /* 0 = no file for it; track 0 stops */
 int  snd_cd_track(void);               /* what is playing, 0 none */
 void snd_cd_volume(float v);           /* the CD's volume, 0..1 (0x4d7c0's 0..255) */

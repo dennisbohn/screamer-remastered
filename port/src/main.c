@@ -606,8 +606,8 @@ static void os_go(int argc, const char *a1, const char *a2)
 /* native: the card draws the scene at the window's size (resolution=native; with res, the high set);
    display: 1 the whole screen, as the desktop is (no other screen mode, ever); filtering, msaa: the
    card's (0, or 2, 4, 8 samples) */
-static struct { int res, diff, laps, speech, music, starting, vol_cd, vol_fx, vol_mu, detail, game, renderer, gpu_starting, native, display, filtering, msaa; } g_cfg =
-    { RES_DEFAULT, 1, 0, 1, 1, 0, 0x6000, 0x6000, 0x6000, 2, 1, RENDERER_DEFAULT, 0, RES_DEFAULT, 0, 0, 0 };
+static struct { int res, diff, laps, speech, music, starting, vol_cd, vol_fx, vol_mu, detail, game, renderer, gpu_starting, native, display, filtering, msaa, music_fm; } g_cfg =
+    { RES_DEFAULT, 1, 0, 1, 1, 0, 0x6000, 0x6000, 0x6000, 2, 1, RENDERER_DEFAULT, 0, RES_DEFAULT, 0, 0, 0, 0 };
 static int g_native;                         /* this run: g_cfg.native, or OS_RES=native */
 /* key_accelerate= ... lines: a key's name in the place of the one in the game's CONTROLS.CFG (controls.c) */
 static char g_cfg_key[6][40];
@@ -634,6 +634,7 @@ static void cfg_load(void)
         if (sscanf(line, "laps=%d", &n) == 1) g_cfg.laps = n & 3;
         if (sscanf(line, "speech=%d", &n) == 1) g_cfg.speech = n != 0;
         if (sscanf(line, "music=%d", &n) == 1) g_cfg.music = n != 0;
+        if (sscanf(line, "music_fm=%d", &n) == 1) g_cfg.music_fm = n != 0;
         if (sscanf(line, "starting_high=%d", &n) == 1) g_cfg.starting = n != 0;
         if (sscanf(line, "game=%d", &n) == 1) g_cfg.game = n == 2 ? 2 : 1;
         if (sscanf(line, "renderer=%63s", val) == 1) g_cfg.renderer = !strcmp(val, "gpu");
@@ -663,6 +664,7 @@ static void cfg_save(void)
     fprintf(f, "volume_cd=%d\nvolume_fx=%d\nvolume_mu=%d\n", g_cfg.vol_cd, g_cfg.vol_fx, g_cfg.vol_mu);
     for (int k = 0; k < 6; k++) if (g_cfg_key[k][0]) fprintf(f, "%s=%s\n", g_cfg_key_word[k], g_cfg_key[k]);
     if (g_cfg.starting) fprintf(f, "starting_high=1\n");
+    if (g_cfg.music_fm) fprintf(f, "music_fm=1\n");
     if (g_cfg.game == 2) fprintf(f, "game=2\n");
 #ifdef OS_GPU
     fprintf(f, "renderer=%s\n", g_cfg.renderer ? "gpu" : "software");
@@ -6904,19 +6906,44 @@ static int   g_dialog_sel, g_rpl_view = -1;
  * music stops; leaving puts them back.  LEFT / RIGHT move, ENTER presses,
  * ESC leaves.
  *
- * Port: there is no disc.  The seven songs (MUSIC1..7.HMP) stand in for its
- * tracks, and since the port's music is that one stream, the CD and MU
- * volumes both act on it.  Eject does nothing.  A press of - / + is one
+ * Port: the disc's seven songs are its tracks 2..8 (song_play: the image, or
+ * files); with no disc MUSIC1..7.HMP stand in for them, and the CD and MU
+ * volumes both act on those.  Eject does nothing.  A press of - / + is one
  * stroke of the bar (the game's is 48000 a second of key).
  */
 static struct { int on, sel, chan, track; float press, fade; } g_cd;
 static int     g_song_now;
 static void champ_darken(int x0, int y0, int w, int h);
 
+/*
+ * SCREAMER'S SONGS.  The game asks for song n in two ways at once (0x12b70, 0x29e5b): the CD's
+ * track n + 1 (0x2636c, again from the start whenever the drive has stopped, 0x26400) and
+ * MUSICn.HMP for a music card -- what is there plays.  GOG's copy has the disc as an image, so
+ * the CD's songs are what its players hear.  The port: the disc's track when there is one
+ * (cdaudio.c: a file track_NN, or the image), else the FM chip's; music_fm=1 in
+ * openscreamer.cfg, the FM chip's always.  0 stops either.
+ */
+static int g_song_cd;          /* the song playing is the CD's */
+static void song_play(int n)
+{
+    g_song_cd = 0;
+    if (n > 0 && !g_cfg.music_fm && snd_cd(n + 1, 1)) {
+        snd_music("build/dec/MUSIC", 0);
+        g_song_cd = 1;
+    } else {
+        snd_cd(0, 0);
+        snd_music("build/dec/MUSIC", n);
+    }
+    if (getenv("OS_SNDLOG")) printf("music: song %d %s\n", n, n <= 0 ? "stopped" : g_song_cd ? "from the CD" : "through the FM chip");
+}
+
+/* the master volumes (CD, effects, MIDI: 0x1d2bc, 0x1d2b8, 0x1d2c0) at `fade`; the FM chip's
+   songs stand for the CD's when there is no disc, so then both CD and MU act on them */
 static void volumes_apply(float fade)
 {
-    snd_masters((float)g_cfg.vol_fx / 24576.0f * fade,
-                (float)g_cfg.vol_cd / 24576.0f * (float)g_cfg.vol_mu / 24576.0f * fade);
+    const float cd = (float)g_cfg.vol_cd / 24576.0f, mu = (float)g_cfg.vol_mu / 24576.0f;
+    snd_masters((float)g_cfg.vol_fx / 24576.0f * fade, (g_song_cd ? 1.0f : cd) * mu * fade);
+    snd_cd_volume((float)g_cfg.vol_cd / 16384.0f * fade);  /* (the drive's volume, vol / 0x8000 of full: the mixer halves the CD's) */
 }
 
 static void cd_open(void)
@@ -6932,7 +6959,8 @@ static void cd_close(void)
     cfg_save();
     volumes_apply(1.0f);
     g_song_now = g_cd.track;
-    if (!getenv("OS_NOMUSIC")) snd_music("build/dec/MUSIC", g_song_now);
+    if (!getenv("OS_NOMUSIC")) song_play(g_song_now);
+    volumes_apply(1.0f);
 }
 
 static void cd_key(int key)
@@ -6966,7 +6994,7 @@ static void cd_draw(float dt)
     /* the race's sound dies away (0xd11: 16384 a second of 0x6000) and the music stops */
     if (g_cd.fade > 0.0f) {
         g_cd.fade -= dt * (16384.0f / 24576.0f);
-        if (g_cd.fade <= 0.0f) { g_cd.fade = 0.0f; snd_music("build/dec/MUSIC", 0); }
+        if (g_cd.fade <= 0.0f) { g_cd.fade = 0.0f; song_play(0); }
         volumes_apply(g_cd.fade);
     }
     g_oy = 0;
@@ -8303,10 +8331,10 @@ static void sound_load(const char *data, int track)
            nothing (0x21e50), and the song must not be heard at full volume
            for the moment the rest of the loading takes (Danik) */
         volumes_apply(0.0f);
-        if (!getenv("OS_NOMUSIC")) snd_music("build/dec/MUSIC", n);
+        if (!getenv("OS_NOMUSIC")) song_play(n);
         g_song_now = n;
         volumes_apply(0.0f);
-        if (getenv("OS_SNDLOG")) printf("music: track %d plays MUSIC%d.HMP\n", track, n);
+        if (getenv("OS_SNDLOG")) printf("music: track %d plays song %d\n", track, n);
     }
     if (os_once(2)) atexit(snd_close);
 }
@@ -9775,7 +9803,7 @@ static int menu_run(int *track, int *car)
         /* the menu has its own nine samples, MENU.DTR's SOUND_FX (smenu1..9); the
            numbers below are the ones the game passes to 0x1f708 */
         snd_init("build/dec/SOUND", "build/dec/GEN/MENU.DTR");
-        snd_masters((float)g_cfg.vol_fx / 24576.0f, (float)g_cfg.vol_cd / 24576.0f * (float)g_cfg.vol_mu / 24576.0f);
+        volumes_apply(1.0f);
     }
     /* (FILTERING and MSAA taken only now: making the window may have turned them off, gpu_start_mark) */
     g_opt_filter = g_cfg.filtering;
@@ -9821,7 +9849,8 @@ static int menu_run(int *track, int *car)
         /* 0x29e47: the menu plays "music%d" of 0x1f00 = song_for(1), while MUSIC is on */
         if (!shotfile[0] && music_on != g_opt_music) {
             music_on = g_opt_music;
-            snd_music("build/dec/MUSIC", music_on ? song_for(1) : 0);
+            song_play(music_on ? song_for(1) : 0);
+            volumes_apply(1.0f);
         }
         tick++;
         g_menu_tick = tick;

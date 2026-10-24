@@ -1536,7 +1536,16 @@ HMI is replaced by a 32-voice STEREO SDL mixer. From the game:
   program image, 2, 3, 2, 4, 5, 2, 4, 5, are placeholders; the port used them for one
   build and Danik heard the wrong songs. A table in the data object may be overwritten
   at start-up — look for a `mov ecx, <table>` loader before trusting it.) The same
-  number + 1 is the CD track (`0x2636c`); there is no CD audio here. `MUSICn.HMP` = "HMIMIDIP013195": `+0x30` tracks, `+0x38` ticks per
+  number + 1 is the CD track: the game asks for both at once (`0x12b70` race, `0x29e5b`
+  menu: `0x2636c` "play track n + 1", repeat flag 1, then `0x2fc7c` "music%d"), and what
+  the machine has plays; the CD driver's poll (`0x26400`, every 8th call) plays the track
+  again whenever the drive is no longer busy (status bit 9), so CD songs go round and round
+  too. **GOG's copy has the disc as an image** (`SCREAM.gog`, its cue sheet `SCREAM.DAT`:
+  tracks 2-8, 4:53 to 5:18 each) and GOG's DOSBox has no music card set, so its players hear
+  the CD. Port (2026-10-24, `song_play`, `cdaudio.c`): the CD's track from the image (or a
+  file `track_NN`), else MUSICn.HMP through the FM chip (`music_fm=1` in `openscreamer.cfg`:
+  always the chip); the drive's volume is the CD master as MSCDEX takes it (vol / 0x8000).
+  `MUSICn.HMP` = "HMIMIDIP013195": `+0x30` tracks, `+0x38` ticks per
   second (120), tracks from `0x388`, each `[number, length incl. these 12 bytes,
   channel]` + events; a delay is 7 bits a byte, LOW part first, the LAST byte has the
   top bit set; then an ordinary MIDI message (no running status); `FF 2F` ends.
@@ -2047,7 +2056,8 @@ name `CD` / `FX` / `MU` at (64, 69) and value/1024 strokes 3 apart from x 85, co
 `0x1d2b8` (digital), `0x1d2c0` (MIDI), start `0x6000`, saved. While the screen is up they
 fade to 0 at 16384/s and the music stops; leaving restores them and plays the chosen
 track. Play leaves; eject runs the disc-change texts (GAME.TXT 16–18); ESC leaves.
-Port: the seven songs stand for the disc's tracks, CD and MU both act on the music,
+Port: the seven songs are the disc's tracks 2-8 (from GOG's image of the disc, section 17's
+MUSIC); with no disc the seven MIDI songs stand for them and CD and MU both act on those;
 eject does nothing, one press of − / + = one stroke; the volumes are in
 `openscreamer.cfg` (`volume_cd` / `_fx` / `_mu`) and `snd_masters()` applies them.
 `OS_CDTEST=n` opens it with the cursor on button n in a robot run.
