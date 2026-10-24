@@ -2,7 +2,8 @@
  * gpu.h - THE GRAPHICS CARD DRAWS AND SHOWS THE PICTURES (the fork's GPU renderer, docs/GPU.md):
  * M1 the pictures (palette numbers in fb) turned into colours and scaled to the window; M2 a
  * race's 3D scene drawn from raster_job's triangle list, read back into fb for the HUD; M3 that
- * scene drawn at any size, and the flat things in fb laid over it as the picture is shown.  Only
+ * scene drawn at any size, and the flat things in fb laid over it as the picture is shown, with
+ * FILTERING and MSAA if wanted.  Only
  * in a build with OS_GPU, where it is the default (renderer= in openscreamer.cfg, -renderer,
  * OS_RENDERER).  Anything missing -- no OpenGL 4.5, a shader that does not compile -- and the
  * software way does it all as before.
@@ -33,6 +34,7 @@ typedef struct {
     int   wrap_mask;
     int   id;                               /* the object, -1 none */
     int   rank;                             /* a car's block: its place in the engine's order, -1 none */
+    int   mat, frame;                       /* M3: the material (gpu_materials' number) and its frame */
     float zbias;                            /* the whole factor on 1 / depth, material's and object's */
     float ground_vy, eye_h;                 /* a sprite's (over_ground) */
 } gpu_tri;
@@ -59,17 +61,32 @@ typedef struct {
     int    smg_half;                        /* 1: raster_job's half and half for faces with no table (colour 0 mixed too) */
     int    tie_rule;
     const gpu_sky *sky;                     /* M3: drawn by the card when the scene is larger than fb (NULL: fb's picture) */
+    const uint32_t *pal;                    /* M3: the palette fb's numbers are of (the scene's colours) */
 } gpu_view;
 
+/* M3: a material: its kind (GPU_KEYED, GLASS, WRAPS), its extent in texels and its frames' first
+   bytes (frame_offset[first] on, `frames` of them) */
+typedef struct { int kind, su, sv, frames, first; } gpu_mat;
+
 int  gpu_scene_ready(void);                                 /* the scene's shaders are there */
-void gpu_materials(const uint8_t *bytes, long len);         /* the track's material bytes (MAPn.MLB as loaded) */
+/* the track's material bytes (MAPn.MLB as loaded) and its materials */
+void gpu_materials(const uint8_t *bytes, long len, const gpu_mat *mat, int nmat, const int *frame_offset);
 /* fb holds the backdrop; fb, zb and idb come back as raster_job would have left them (a scene
-   drawn larger: as it is at their pixels' middles) */
-void gpu_scene(const gpu_view *v, const gpu_tri *t, int n, uint8_t *fb, float *zb, int16_t *idb);
+   drawn larger: as it is at their pixels' middles).  1: the card's own scene is what is shown
+   (drawn larger, FILTERING, MSAA), and the flat things go over it (gpu_overlay) */
+int  gpu_scene(const gpu_view *v, const gpu_tri *t, int n, uint8_t *fb, float *zb, int16_t *idb);
 /* M3: over the scene drawn last, the next picture's flat things: per pixel of fb 0 the scene,
    1 fb's own colour, 2 + k the scene through table k (luts: n of 256); flip 1 across, 2 down */
 void gpu_overlay(const uint8_t *layer, const uint8_t *luts, int n, int flip);
 /* M3: the picture shown last once more, its scene and flat things as they were (fb holds it again) */
 void gpu_again(void);
+/* M3: FILTERING and MSAA -- with either on, the scene is drawn in colour as well as in palette
+   numbers and shown as drawn: its textures filtered (mip-mapped, anisotropic), its edges sampled
+   msaa times a pixel (0 none, 2, 4, 8).  Both off: as before, pixel for pixel */
+void gpu_quality(int filtering, int msaa);
+int  gpu_colour(void);                  /* 1: the scenes are the card's own as shown (FILTERING or MSAA on, and possible) */
+int  gpu_samples(void);                 /* the samples a pixel the next scene is drawn with (1: none) */
+int  gpu_msaa_max(void);                /* the most samples the card can give (0: no FILTERING, no MSAA here) */
+void gpu_fades(float fade, uint32_t to, float to_k);   /* the next picture's fades, show_palette's numbers */
 
 #endif

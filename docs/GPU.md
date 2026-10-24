@@ -21,15 +21,16 @@ The software renderer is the fall-back, nothing to choose in the menus:
 | M0 | build option, `renderer=` switch, fall-back to software | done |
 | M1 | the picture through the GPU: `fb` (palette numbers) and the shown palette as textures, one shader scales 4:3 with bars, nearest pixel; vsync; DPI-aware window | done |
 | M2 | the 3D scene on the GPU at the original resolution: `tri_job` list, materials 16/64/128/160/224, depth rules; A/B tool against the software renderer | done |
-| M3 | the scene at the window's size (RES NATIVE, up to 4K), the menu's 3D too; GRAPHICS page (RES, DISPLAY, DETAIL) | first step done |
-| M3 | texture filtering, to be switched on and off (a true-colour scene); MSAA later | next |
+| M3 | the scene at the window's size (RES NATIVE, up to 4K), the menu's 3D too; GRAPHICS page (RES, DISPLAY, DETAIL) | done |
+| M3 | FILTERING (a true-colour scene, its textures filtered) and MSAA 2X / 4X / 8X, both on the GRAPHICS page, off by default | done |
 | M4 | 16:9 and wider | later |
 | M5 | draw distance (far plane, keep range, animations started as far as is drawn) | put back: ULTRA is enough for now |
 | M6 | interpolation between the 50 Hz physics steps | later |
 
 ## The picture's size (M3)
 
-OPTIONS has one line GRAPHICS in the place of DETAIL and RESOLUTION; its page has three:
+OPTIONS has one line GRAPHICS in the place of DETAIL and RESOLUTION; its page has RES,
+WINDOW / FULLSCREEN and DETAIL, then FILTERING and MSAA (next section):
 
 - **RES NATIVE** (the default): the card draws the scene at the size of the window's 4:3 part,
   in its own pixels (a 4K screen in full: 2880 x 2160). **RES VGA** and **RES SVGA**: the
@@ -64,6 +65,45 @@ Every change shows at once. How a larger scene is drawn:
   `raster_job`'s half and half as a table. A screen being left stands still at its last
   picture, the card's too (`gpu_again`). A list's solid and see-through faces are drawn in
   runs in its own order (a race: all solid ones first).
+
+## FILTERING and MSAA (M3)
+
+Two more lines on the GRAPHICS page, **FILTERING OFF / ON** and **MSAA OFF / 2X / 4X / 8X**
+(`filtering=0|1`, `msaa=0|2|4|8` in `openscreamer.cfg`; both off by default, the original's
+look). Every change shows at once, in the menu's cubes too. Without the card the two lines are
+not there; MSAA's line goes as far as the card can. Both off: the pictures are the same as
+before, byte for byte (also the larger ones). With either on, the card's scene is what is shown,
+at fb's own size too (RES VGA / SVGA), with the flat things over it as for M3.
+
+- **The palette numbers stay.** The index target keeps exactly what it had (nearest texels,
+  `SMG` on numbers): fb is still read back from it for the HUD and the darkenings, and pass 1
+  still looks its tables up with it.
+- **FILTERING: the scene in colour beside it.** Each frame of each material is a colour layer
+  of a 2D array of 256 x 256 (a compute shader makes them from the material bytes and the
+  palette, again when either changes; then the smaller copies). A layer is the frame's own
+  rectangle (its `su` x `sv`, rows 256 bytes apart from its first byte) and beyond it its edge
+  again, so that no other texture's texels come into the filtering; routine 160's is the whole
+  256 x 256, as it wraps. Keyed ones (routine 64) have colour 0 as a hole, premultiplied, and
+  their holes are taken from the bilinear of level 0 (thin things stay thin far off). The
+  texel's place and its steps come from the planes (`u = uz / z`), anisotropic where the card
+  has it. Filtering, the smaller copies and a pixel's samples are averaged as light (sRGB); the
+  game's own blends stay in the palette's colours.
+- **See-through and darkenings as lines.** Pass 1's `SMG[strength][what is there]` and the
+  2D darkenings (radar, dialog, CD player) are tables of numbers; for a filtered colour each row
+  is turned into a straight line on the colours, per channel, fitted over the palette
+  (`rows_fit`; a darkening a factor alone), so nothing brings the palette's steps back into a
+  smooth texture. The strength texels of smoke, shadows and glass are mixed four round the
+  place, each through its own row's line.
+- **MSAA: the exact way, once for each sample.** The shaders take the sample's place instead of
+  the pixel's middle (`gl_SamplePosition`): planes, texel, depth (`gl_FragDepth`), the keyed
+  holes, the car's block order (stencil), pass 1's `depth_keep` and `SMG` -- all per sample, so
+  ties and carpets come out as in the exact way, and cut-out edges (trees, fences) are smoothed
+  too. The picture is the mean of a pixel's samples (each through the shown palette, or its
+  colour with FILTERING); fb is read back from each pixel's first sample. With MSAA no face is
+  left out for being between two pixels' middles (`cull_set`): a sample may lie in it.
+- **Safety.** FILTERING and MSAA have their own OpenGL functions and shaders: anything missing
+  and only they are not there. No room for the targets: fewer samples, then none. A start that
+  dies with either on (the mark in `openscreamer.cfg`) turns them off, not the card.
 
 ## How the scene is drawn (M2)
 
@@ -118,6 +158,7 @@ What still differs from the software renderer, by design:
 - `OS_GPUSHOTHI=1` with `OS_SHOTEVERY` or `OS_MENU_SHOT`: each picture also as the card shows
   it, at its scene's size (`..._hi.ppm`).
 - `OS_NOBLOCKORDER=1`: a car's blocks by depth alone, in both renderers.
+- `OS_FILTER=0|1`, `OS_MSAA=0|2|4|8`: FILTERING and MSAA for one run, over the setting.
 - `OS_GPUPUFFS=1`: the scenes with smoke in them (how many of the puffs' triangles).
 
 On Windows 11 with an RX 9070 XT (2026-10-23):
@@ -144,3 +185,11 @@ On Windows 11 with an RX 9070 XT (2026-10-23):
   middle): the same sums at the same places. Pictures at 2880 x 2160 and the menu at 1920 x
   1440 looked at: the HUD, the radar's darkened window, the replay's marks, the menu's cubes
   and cars.
+- FILTERING and MSAA (2026-10-24): both off, a robot's race on track 1 at 1x and 3x gives the
+  same pictures as before, byte for byte (fb's and the shown ones). FILTERING alone changes fb's
+  read-back in 0.1 % of its pixels (the keyed holes' edges, by design). Looked at: trees and
+  fences, smoke at the start, the radar's window, the start banner, the sky, the menu's cubes,
+  the intro's cards, the mirror cheat, SVGA at 1x. Time for a picture at 2880 x 2160 (robot's
+  race, track 1, no vsync, the port's work with the card's wait): both off 2.1 ms, FILTERING
+  2.2, MSAA 2X 3.3, 4X 5.5, 8X 11.4, FILTERING with 4X 6.7, with 8X 14.0. The textures' colour
+  layers take about 190 MB, MSAA 8X's targets at that size about 0.9 GB.

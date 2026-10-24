@@ -479,11 +479,14 @@ static void os_help(const char *me)
 "  UP / DOWN      choose a line           LEFT / RIGHT  change an option, the car, the track\n"
 "  ENTER          go on                   ESC           back (on the first page: leave)\n"
 #ifdef MISTER_HYBRID
-"  OPTIONS has: DETAIL (LOW, MID, HI as the original),\n"
+"  OPTIONS has: DETAIL (LOW, MID, HI as the original), difficulty, laps, speech, music,\n"
+"  records.\n"
 #else
-"  OPTIONS has: DETAIL (LOW, MID, HI as the original; ULTRA draws much further),\n"
+"  OPTIONS has: GRAPHICS -- RES (NATIVE: the window's size; VGA 320x200 and SVGA 640x400 as\n"
+"  the original), WINDOW / FULLSCREEN, DETAIL (LOW, MID, HI as the original; ULTRA draws much\n"
+"  further), FILTERING and MSAA (the graphics card's smoothing; OFF is the original's look) --\n"
+"  then difficulty, laps, speech, music, records.\n"
 #endif
-"  RESOLUTION (320x200 or 640x400), difficulty, laps, speech, music, records.\n"
 "\n"
 "IN A RACE\n"
 "  UP / DOWN      accelerate / brake      LEFT / RIGHT  steer\n"

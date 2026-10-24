@@ -2318,7 +2318,8 @@ arrows, A = ENTER, B = ESC (`controls_menu_mode`).  Every `SDL_PollEvent` in mai
 files still read.  `car_state.analog` carries them to `drive.c`.
 `OS_PADTEST=stick,gas,brake` (SDL raw, +-32767) pretends a controller and switches the
 robot off: `OS_PADTEST=11000,32767,0` gives 6.0 deg of lock at rest (a third of 18).
-**Not tested with a real controller.**
+Tested with a real controller on 2026-10-24 (an Xbox controller on Windows, the fork's
+user): "works wonderfully".
 
 **Revving on the grid** (Danik, from the original; `0x18df0` -> `0x193e7`).  Until the
 green light (flag 1 at `0x18e18`) the engine routine skips gearbox and drive and only

@@ -384,6 +384,7 @@ static jmp_buf *g_next_part;           /* where os_go() jumps back to: the loop 
 #define SDL_RenderPresent(r)              (gpu_active() ? gpu_present() : (SDL_RenderPresent)(r))
 static int renderer_gpu(void);
 static int gpu_start_mark(int wanted);
+static void gpu_quality_set(void);
 #endif
 static Uint32 display_flags(void);
 
@@ -439,7 +440,12 @@ static SDL_Window *sys_window(SDL_Renderer **ren)
 #ifdef OS_GPU
         /* the card shows the pictures (gpu.c); the window stands in for SDL's renderer, which the
            calls to it pass by (the SDL_Render* above) -- or, with no OpenGL, SDL's renderer as ever */
-        if (gpu_wanted && win && gpu_open(win)) { os_slot_set(0, win); os_slot_set(1, win); if (ren) *ren = os_slot(1); return win; }
+        if (gpu_wanted && win && gpu_open(win)) {
+            os_slot_set(0, win); os_slot_set(1, win);
+            gpu_quality_set();
+            if (ren) *ren = os_slot(1);
+            return win;
+        }
 #endif
         SDL_Renderer *r = win ? SDL_CreateRenderer(win, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC) : NULL;
         if (!r) fprintf(stderr, "no %s: %s\n", win ? "renderer" : "window", SDL_GetError());
@@ -490,6 +496,7 @@ static void show_pixels(SDL_Texture *tex, const uint8_t *pixels, int rows)
 #else
 #ifdef OS_GPU
     if (gpu_active()) {                         /* the numbers and the palette to the card (gpu.c) */
+        gpu_fades(g_show_fade, g_show_to, g_show_to_k);
         gpu_picture(pixels, FB_W, rows, pal);
         if (getenv("OS_GPUCHECK")) {            /* a test: OS_GPUCHECK=<n> pictures compared with the software way's, then the end */
             static int n_, bad_;
@@ -597,9 +604,10 @@ static void os_go(int argc, const char *a1, const char *a2)
 #define RES_DEFAULT      0
 #endif
 /* native: the card draws the scene at the window's size (resolution=native; with res, the high set);
-   display: 1 the whole screen, as the desktop is (no other screen mode, ever) */
-static struct { int res, diff, laps, speech, music, starting, vol_cd, vol_fx, vol_mu, detail, game, renderer, gpu_starting, native, display; } g_cfg =
-    { RES_DEFAULT, 1, 0, 1, 1, 0, 0x6000, 0x6000, 0x6000, 2, 1, RENDERER_DEFAULT, 0, RES_DEFAULT, 0 };
+   display: 1 the whole screen, as the desktop is (no other screen mode, ever); filtering, msaa: the
+   card's (0, or 2, 4, 8 samples) */
+static struct { int res, diff, laps, speech, music, starting, vol_cd, vol_fx, vol_mu, detail, game, renderer, gpu_starting, native, display, filtering, msaa; } g_cfg =
+    { RES_DEFAULT, 1, 0, 1, 1, 0, 0x6000, 0x6000, 0x6000, 2, 1, RENDERER_DEFAULT, 0, RES_DEFAULT, 0, 0, 0 };
 static int g_native;                         /* this run: g_cfg.native, or OS_RES=native */
 /* key_accelerate= ... lines: a key's name in the place of the one in the game's CONTROLS.CFG (controls.c) */
 static char g_cfg_key[6][40];
@@ -620,6 +628,8 @@ static void cfg_load(void)
             g_cfg.native = !strcmp(val, "native") || !strcmp(val, "high");
         }
         if (sscanf(line, "display=%63s", val) == 1) g_cfg.display = !strcmp(val, "fullscreen");
+        if (sscanf(line, "filtering=%d", &n) == 1) g_cfg.filtering = n != 0;
+        if (sscanf(line, "msaa=%d", &n) == 1) g_cfg.msaa = n >= 8 ? 8 : n >= 4 ? 4 : n >= 2 ? 2 : 0;
         if (sscanf(line, "difficulty=%d", &n) == 1) g_cfg.diff = n < 0 ? 0 : n > 3 ? 3 : n;
         if (sscanf(line, "laps=%d", &n) == 1) g_cfg.laps = n & 3;
         if (sscanf(line, "speech=%d", &n) == 1) g_cfg.speech = n != 0;
@@ -656,6 +666,7 @@ static void cfg_save(void)
     if (g_cfg.game == 2) fprintf(f, "game=2\n");
 #ifdef OS_GPU
     fprintf(f, "renderer=%s\n", g_cfg.renderer ? "gpu" : "software");
+    fprintf(f, "filtering=%d\nmsaa=%d\n", g_cfg.filtering, g_cfg.msaa);
     if (g_cfg.gpu_starting) fprintf(f, "gpu_starting=1\n");
 #endif
     fclose(f);
@@ -679,6 +690,14 @@ static int renderer_gpu(void)
     return e ? !strcmp(e, "gpu") : g_cfg.renderer;
 }
 
+/* FILTERING and MSAA to the card, as set (OS_FILTER=0|1, OS_MSAA=0|2|4|8: tests, over the setting) */
+static void gpu_quality_set(void)
+{
+    if (!gpu_active()) return;
+    gpu_quality(getenv("OS_FILTER") ? atoi(getenv("OS_FILTER")) != 0 : g_cfg.filtering,
+                getenv("OS_MSAA") ? atoi(getenv("OS_MSAA")) : g_cfg.msaa);
+}
+
 /* the card has drawn a race picture, or the program ends in order: the mark goes */
 static void gpu_started(void)
 {
@@ -687,13 +706,25 @@ static void gpu_started(void)
     cfg_save();
 }
 
+/* FILTERING or MSAA switched on: the start's mark again (a card that dies of it loses only them,
+   gpu_start_mark), gone at the next race picture or an orderly end; saved by the caller */
+static void gpu_quality_mark(void)
+{
+    if (getenv("OS_RENDERER") || !(g_cfg.filtering || g_cfg.msaa)) return;
+    g_cfg.gpu_starting = 1;
+    if (os_once(6)) atexit(gpu_started);
+}
+
 /* THE CARD THAT DID NOT START falls back to software, as high resolution does to low: a mark in
    the settings file from just before the card is first used to its first race picture (or an
    orderly end); one still there means the last start died on the way.  1: use the card */
 static int gpu_start_mark(int wanted)
 {
     if (!wanted || getenv("OS_RENDERER")) return wanted;
-    if (g_cfg.gpu_starting) {
+    if (g_cfg.gpu_starting && (g_cfg.filtering || g_cfg.msaa)) {
+        fprintf(stderr, "gpu: the last start with it did not get as far as a race picture -- FILTERING and MSAA off\n");
+        g_cfg.filtering = 0; g_cfg.msaa = 0;
+    } else if (g_cfg.gpu_starting) {
         fprintf(stderr, "gpu: the last start with it did not get as far as a race picture -- the software way\n");
         g_cfg.renderer = 0; g_cfg.gpu_starting = 0;
         cfg_save();
@@ -1957,12 +1988,40 @@ static void gpu_list(const tri_job *j)
               (m->type == 160 ? GPU_WRAPS : 0) | (j->sprite ? GPU_SPRITE : 0);
     t->wrap_mask = pm != m ? 127 : 255;
     t->id = j->id; t->rank = j->rank;
+    t->mat = on_card ? (int)(pm - g_mat) : -1; t->frame = fr;
     t->zbias = (m->type == 64 ? 1.002f : m->type == 160 ? 0.998f : 1.0f) * j->zbias;    /* (raster_job's) */
     t->ground_vy = j->ground_vy; t->eye_h = j->eye_h;
     t->x[0] = j->ax; t->y[0] = j->ay; t->iz[0] = j->ia; t->u[0] = j->au; t->v[0] = j->av;
     t->x[1] = j->bx; t->y[1] = j->by; t->iz[1] = j->ib; t->u[1] = j->bu; t->v[1] = j->bv;
     t->x[2] = j->cx; t->y[2] = j->cy; t->iz[2] = j->ic; t->u[2] = j->cu; t->v[2] = j->cv;
     g_gpu_tri_n++;
+}
+
+/* the material bytes and the materials to the card, once a library is loaded (M3: their frames
+   are made into colour textures there when FILTERING is on) */
+static void gpu_send_materials(void)
+{
+    if (g_gpu_mlb_sent) return;
+    g_gpu_mlb_sent = 1;
+    int nf = 0;
+    for (int i = 0; i < g_nmat; i++) nf += g_mat[i].levels > 0 ? g_mat[i].levels : 0;
+    gpu_mat *mat = malloc(sizeof *mat * (size_t)(g_nmat + 1));
+    int *off = malloc(sizeof *off * (size_t)(nf + 1));
+    if (!mat || !off) { free(mat); free(off); gpu_materials(g_mlb, g_mlb_len, NULL, 0, NULL); return; }
+    nf = 0;
+    for (int i = 0; i < g_nmat; i++) {
+        const material *m = &g_mat[i];
+        gpu_mat *q = &mat[i];
+        q->kind = (m->type == 64 ? GPU_KEYED : 0) | (m->type == 224 ? GPU_GLASS : 0) | (m->type == 160 ? GPU_WRAPS : 0);
+        q->su = m->su; q->sv = m->sv; q->first = nf; q->frames = 0;
+        for (int fr = 0; fr < m->levels && m->page && m->type != 128 && m->type != 224; fr++) {
+            const uint8_t *page = m->frame[fr];
+            off[nf + q->frames++] = page && page >= g_mlb && page < g_mlb + g_mlb_len ? (int)(page - g_mlb) : -1;
+        }
+        nf += q->frames;
+    }
+    gpu_materials(g_mlb, g_mlb_len, mat, g_nmat, off);
+    free(mat); free(off);
 }
 
 /* M3: the size the card draws the scene at -- RES NATIVE the window's 4:3 part, else fb's own
@@ -1979,6 +2038,15 @@ static void scene_size(int *w, int *h)
     if (a >= 64 && b >= 40 && a <= 8192 && b <= 8192) { *w = a; *h = b; }
 }
 
+/* M3: emit_face's test for faces that hit no pixel's middle counts the card's pixels; with MSAA
+   none is left out (0: a face between two pixels' middles may still cover a sample) */
+static void cull_set(void)
+{
+    const int ms = gpu_samples() > 1;
+    g_cull_fx = ms ? 0.0f : (float)g_gpu_rw / (float)FB_W;
+    g_cull_fy = ms ? 0.0f : (float)g_gpu_rh / (float)FB_H;
+}
+
 /* the see-through faces with no table of their own (the menu's): raster_job's half and half, the
    palette's nearest to the two colours mixed -- as a table for the card, row = the face's colour */
 static const uint8_t *mix_table(void)
@@ -1993,18 +2061,18 @@ static const uint8_t *mix_table(void)
     return t;
 }
 
-/* M3: THE MENU'S 3D ON THE CARD as well, when the scene is drawn larger than fb (RES NATIVE):
-   menu3d_begin after its backdrop is in fb, menu3d_end once its 3D is listed */
+/* M3: THE MENU'S 3D ON THE CARD as well, when the scene is drawn larger than fb (RES NATIVE) or in
+   colour (FILTERING, MSAA): menu3d_begin after its backdrop is in fb, menu3d_end once its 3D is listed */
 static void menu3d_begin(void)
 {
     g_gpu_scene = 0;
     if (!gpu_active() || os_game() != 1 || !g_mlb || (getenv("OS_GPU3D") && !atoi(getenv("OS_GPU3D")))) return;
     scene_size(&g_gpu_rw, &g_gpu_rh);
-    if (g_gpu_rw == FB_W && g_gpu_rh == FB_H) return;
-    if (!g_gpu_mlb_sent) { gpu_materials(g_mlb, g_mlb_len); g_gpu_mlb_sent = 1; }
+    if (g_gpu_rw == FB_W && g_gpu_rh == FB_H && !gpu_colour()) return;
+    gpu_send_materials();
     g_gpu_scene = gpu_scene_ready();
     if (!g_gpu_scene) return;
-    g_cull_fx = (float)g_gpu_rw / (float)FB_W; g_cull_fy = (float)g_gpu_rh / (float)FB_H;
+    cull_set();
     g_tri_listing = 1;
 }
 
@@ -2016,9 +2084,8 @@ static void menu3d_end(void)
     const int own = g_have_smg || !glass;
     const gpu_view v = { FB_W, FB_H, g_vh, g_gpu_rw, g_gpu_rh, g_cy, g_focal_y, g_obj_d2, g_obj_carpet, g_obj_ground,
                          (int)(sizeof g_obj_d2 / sizeof g_obj_d2[0]), own ? g_smg : mix_table(), own ? g_smg_rows : 256, !own,
-                         g_tie_rule, NULL };
-    gpu_scene(&v, g_gpu_tri, g_gpu_tri_n, fb, zb, idb);
-    g_lay_want = 1;
+                         g_tie_rule, NULL, g_pal };
+    g_lay_want = gpu_scene(&v, g_gpu_tri, g_gpu_tri_n, fb, zb, idb);
     g_gpu_tri_n = 0; g_gpu_scene = 0; g_tri_listing = 0;
     g_cull_fx = g_cull_fy = 1.0f;
     lay_begin(0);
@@ -2175,9 +2242,9 @@ static void emit_face(const vtx *in, float prj[][3], int nc, unsigned any, const
         if (prj[k][1] > y1) y1 = prj[k][1];
     }
     if (!(x1 >= 0 && x0 <= FB_W && y1 >= 0 && y0 <= FB_H)) return;
-    /* (the centres of the pixels the scene is drawn at: g_cull_fx and g_cull_fy of them to one of fb's) */
-    if ((x1 - x0) * g_cull_fx < 1.0f && iceil(x0 * g_cull_fx - 0.5f) > ifloor(x1 * g_cull_fx - 0.5f)) return;  /* between two columns of centres */
-    if ((y1 - y0) * g_cull_fy < 1.0f && iceil(y0 * g_cull_fy - 0.5f) > ifloor(y1 * g_cull_fy - 0.5f)) return;  /* between two rows */
+    /* (the centres of the pixels the scene is drawn at: g_cull_fx and g_cull_fy of them to one of fb's; 0 none) */
+    if (g_cull_fx > 0.0f && (x1 - x0) * g_cull_fx < 1.0f && iceil(x0 * g_cull_fx - 0.5f) > ifloor(x1 * g_cull_fx - 0.5f)) return;  /* between two columns of centres */
+    if (g_cull_fy > 0.0f && (y1 - y0) * g_cull_fy < 1.0f && iceil(y0 * g_cull_fy - 0.5f) > ifloor(y1 * g_cull_fy - 0.5f)) return;  /* between two rows */
     fade_for(in, nc);
     tri_job j;
     j.m = m; j.id = id; j.rank = g_obj_rank;
@@ -2778,13 +2845,13 @@ static void render_scene(const camera *cam, const sky *s)
     /* M2: Screamer's scene on the card (OS_GPU3D=0: still raster_job, for comparing) */
     if (gpu_active() && os_game() == 1 && g_scene && g_mlb && g_have_smg && g_fog <= 0.0f && !g_fade_on &&
         !(getenv("OS_GPU3D") && !atoi(getenv("OS_GPU3D")))) {
-        if (!g_gpu_mlb_sent) { gpu_materials(g_mlb, g_mlb_len); g_gpu_mlb_sent = 1; }
+        gpu_send_materials();
         g_gpu_scene = gpu_scene_ready();
     }
     g_gpu_rw = FB_W; g_gpu_rh = FB_H;
     if (g_gpu_scene) {                                  /* M3: maybe larger than fb */
         scene_size(&g_gpu_rw, &g_gpu_rh);
-        g_cull_fx = (float)g_gpu_rw / (float)FB_W; g_cull_fy = (float)g_gpu_rh / (float)FB_H;
+        cull_set();
     }
 #endif
     {
@@ -2859,9 +2926,8 @@ static void render_scene(const camera *cam, const sky *s)
         sky.ground = g_ground_colour >= 0 ? g_ground_colour : pal_near(COL_GROUND);
         sky.clear = getenv("OS_SKYMARK") ? pal_near(0xff00ff) : pal_near(COL_SKY_FALLBACK);
         const gpu_view v = { FB_W, FB_H, g_vh, g_gpu_rw, g_gpu_rh, g_cy, g_focal_y, g_obj_d2, g_obj_carpet, g_obj_ground,
-                             (int)(sizeof g_obj_d2 / sizeof g_obj_d2[0]), g_smg, g_smg_rows, 0, g_tie_rule, &sky };
-        gpu_scene(&v, g_gpu_tri, g_gpu_tri_n, fb, zb, idb);
-        g_lay_want = g_gpu_rw != FB_W || g_gpu_rh != FB_H;
+                             (int)(sizeof g_obj_d2 / sizeof g_obj_d2[0]), g_smg, g_smg_rows, 0, g_tie_rule, &sky, g_pal };
+        g_lay_want = gpu_scene(&v, g_gpu_tri, g_gpu_tri_n, fb, zb, idb);      /* (shown as the card drew it) */
         g_gpu_tri_n = 0;
         g_gpu_scene = 0;
         g_cull_fx = g_cull_fy = 1.0f;
@@ -8817,7 +8883,7 @@ typedef struct { char name[24]; int gearbox, kmh, grip, accel; } menu_car;
 static menu_car g_menu_car[MENU_CARS];
 static int      g_nmenu_car;
 static char     g_menu_track[12][24];             /* 7..12: the same six, driven the other way */
-static char     g_menu_text[74][40];
+static char     g_menu_text[80][40];
 /* 0x287a8 / 0x28726: the last track and the last car that can be chosen */
 static int      g_track_max = 5, g_car_max = 12, g_menu_tick;
 
@@ -8915,6 +8981,7 @@ static void menu_frame(int screen, int pick, float turn, const uint8_t *bg, mesh
 typedef struct { int line, works, *value, max; } menu_item;
 static int g_opt_detail = 2, g_opt_res = 0, g_opt_diff = 1, g_opt_laps = 0, g_opt_speech = 1, g_opt_music = 1;
 static int g_opt_gres, g_opt_disp;              /* GRAPHICS: 0 RES NATIVE, 1 VGA (320 x 200), 2 SVGA (640 x 400); 1 FULLSCREEN */
+static int g_opt_filter, g_opt_msaa;            /* GRAPHICS: FILTERING 0 OFF 1 ON; MSAA 0 OFF, 1 2X, 2 4X, 3 8X */
 /* THE PORT'S OWN: with both games found and no -game, the menu starts on a page of two lines that
    chooses the game -- SCREAMER goes on to its intro and menu, SCREAMER 2 to its own (os_select_game);
    the line lit at first is the game chosen last (openscreamer.cfg game=) */
@@ -8944,9 +9011,23 @@ static menu_item g_page_options[] = {            /* the difficulty's highest val
     { 17, 1, &g_opt_speech, 1 }, { 19, 1, &g_opt_music, 1 }, { 21, 1, NULL, 0 },
 };
 /* THE PORT'S OWN: GRAPHICS -- the picture's size (NATIVE the window's; VGA and SVGA the original's
-   two, 320 x 200 and 640 x 400, for its look), the window or the whole screen, and the game's DETAIL */
-static const menu_item g_page_graphics[] = { { 69, 1, &g_opt_gres, 2 }, { 72, 1, &g_opt_disp, 1 }, { 62, 1, &g_opt_detail, 3 } };
-#define PAGE_GRAPHICS 10
+   two, 320 x 200 and 640 x 400, for its look), the window or the whole screen, the game's DETAIL, and
+   the card's FILTERING and MSAA (dimmed without the card) */
+static menu_item g_page_graphics[] = {
+    { 69, 1, &g_opt_gres, 2 }, { 72, 1, &g_opt_disp, 1 }, { 62, 1, &g_opt_detail, 3 },
+#ifdef OS_GPU
+    { 74, 1, &g_opt_filter, 1 }, { 76, 1, &g_opt_msaa, 3 },
+#endif
+};
+#define PAGE_GRAPHICS  10
+/* the GRAPHICS page's lines: FILTERING and MSAA only with the card's scene */
+static int graphics_lines(void)
+{
+#ifdef OS_GPU
+    if (gpu_msaa_max() > 0) return 5;
+#endif
+    return 3;
+}
 static const menu_item g_page_records[] = {      /* the game's page 6: a track's records */
     { 31, 1, NULL, 0 }, { 32, 1, NULL, 0 }, { 33, 1, NULL, 0 }, { 34, 1, NULL, 0 }, { 35, 1, NULL, 0 }, { 36, 1, NULL, 0 },
 };
@@ -9586,6 +9667,12 @@ static int menu_run(int *track, int *car)
     strcpy(g_menu_text[71], "RES SVGA");
     strcpy(g_menu_text[72], "WINDOW");
     strcpy(g_menu_text[73], "FULLSCREEN");
+    strcpy(g_menu_text[74], "FILTERING OFF");
+    strcpy(g_menu_text[75], "FILTERING ON");
+    strcpy(g_menu_text[76], "MSAA OFF");
+    strcpy(g_menu_text[77], "MSAA 2X");
+    strcpy(g_menu_text[78], "MSAA 4X");
+    strcpy(g_menu_text[79], "MSAA 8X");
     car_spec specs[CAR_SPECS_MAX];
     int nspec = cars_dtr_load(specs, CAR_SPECS_MAX, "build/dec/GEN/CARS.DTR");
     if (g_nmenu_car > nspec) g_nmenu_car = nspec;
@@ -9690,6 +9777,9 @@ static int menu_run(int *track, int *car)
         snd_init("build/dec/SOUND", "build/dec/GEN/MENU.DTR");
         snd_masters((float)g_cfg.vol_fx / 24576.0f, (float)g_cfg.vol_cd / 24576.0f * (float)g_cfg.vol_mu / 24576.0f);
     }
+    /* (FILTERING and MSAA taken only now: making the window may have turned them off, gpu_start_mark) */
+    g_opt_filter = g_cfg.filtering;
+    g_opt_msaa = g_cfg.msaa >= 8 ? 3 : g_cfg.msaa >= 4 ? 2 : g_cfg.msaa >= 2 ? 1 : 0;
     /* THE CHEATS (0x288dc, table at 0x2e00, words from MENU.DTR): five letters
        typed anywhere in the menu.  Letters that fit no word start again. */
     static const struct { const char *word; int what, value, flip; } cheat[9] = {
@@ -9754,6 +9844,13 @@ static int menu_run(int *track, int *car)
         g_car_max = (unlock || g_save.bullet) ? 12 : 11;
         if (g_car_max > g_nmenu_car - 1) g_car_max = g_nmenu_car - 1;
         g_page_options[OPT_DIFF].max = (unlock || g_save.bullet || cheat_diff || osd_aburn) ? 3 : 2;            /* AFTERBURNER */
+#ifdef OS_GPU
+        {   /* GRAPHICS: FILTERING and MSAA where the card has them (their lines are not there otherwise) */
+            const int most = gpu_msaa_max();
+            g_page_graphics[4].max = most >= 8 ? 3 : most >= 4 ? 2 : most >= 2 ? 1 : 0;
+            if (most > 0 && g_opt_msaa > g_page_graphics[4].max) g_opt_msaa = g_page_graphics[4].max;
+        }
+#endif
         if (g_opt_diff > g_page_options[OPT_DIFF].max) g_opt_diff = g_page_options[OPT_DIFF].max;
         /* OS_MENU_KEYS="DEUS..." presses keys by itself, one every 1.2 s, for
            testing: U D L R, E enter, X escape, S save a picture, a-z typed */
@@ -9793,6 +9890,14 @@ static int menu_run(int *track, int *car)
             cfg_save();
         }
         if (!shotfile[0] && g_opt_disp != g_cfg.display) sys_fullscreen(g_opt_disp);
+#ifdef OS_GPU
+        if (!shotfile[0] && (g_opt_filter != g_cfg.filtering || (g_opt_msaa ? 1 << g_opt_msaa : 0) != g_cfg.msaa)) {
+            g_cfg.filtering = g_opt_filter; g_cfg.msaa = g_opt_msaa ? 1 << g_opt_msaa : 0;
+            gpu_quality_mark();
+            cfg_save();
+            gpu_quality_set();
+        }
+#endif
 #endif
         if (!shotfile[0] && g_opt_res != (g_s == 2)) {
             g_cfg.res = g_opt_res; g_cfg.detail = g_opt_detail; g_cfg.diff = g_opt_diff; g_cfg.laps = g_opt_laps;
@@ -9997,7 +10102,7 @@ static int menu_run(int *track, int *car)
         if (page >= 0) {
             const menu_item *items = page == 0 ? g_page_main : page == 1 ? g_page_options : page == PAGE_GRAPHICS ? g_page_graphics
                                    : page == 2 ? g_page_special : page == 7 ? g_page_records : page == PAGE_GAME ? g_page_game : g_page_attack;
-            int n = page == 0 ? 5 : page == 1 ? OPT_LINES : page == PAGE_GRAPHICS ? 3 : page == 2 ? 3 : page == 7 ? 6 : 2;      /* 3 and 5: NEW / RESUME; the game's two */
+            int n = page == 0 ? 5 : page == 1 ? OPT_LINES : page == PAGE_GRAPHICS ? graphics_lines() : page == 2 ? 3 : page == 7 ? 6 : 2;      /* 3 and 5: NEW / RESUME; the game's two */
             memcpy(g_pal, pal_main, sizeof g_pal);
             {
                 /* a page, or a line of it, that is not what the cubes spell: they
@@ -12935,6 +13040,9 @@ static int session(int argc, char **argv)
                 if (f <= 0.0f) break;
                 g_show_fade = f;                         /* (the palette's: the picture stands as it is) */
                 volumes_apply(f);
+#ifdef OS_GPU
+                gpu_again();                             /* (and the card's scene as it was) */
+#endif
                 show_picture(tex);
                 SDL_RenderClear(ren);
                 SDL_RenderCopy(ren, tex, NULL, NULL);

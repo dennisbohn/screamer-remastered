@@ -80,7 +80,8 @@ def run(args, env, cwd, log):
 def case_env(opt, renderer, home, res):
     env = dict(os.environ, OPENSCREAMER_HOME=home, SDL_AUDIODRIVER="dummy",
                OS_DETAIL=str(opt.detail), OS_RES=res, OS_RENDERER=renderer)
-    for k in ("OS_UVRUN", "OS_GPUHIDDEN", "OS_DRIVE_DEMO", "OS_SHOTEVERY", "SDL_VIDEODRIVER", "SDL_RENDER_DRIVER"):
+    for k in ("OS_UVRUN", "OS_GPUHIDDEN", "OS_DRIVE_DEMO", "OS_SHOTEVERY", "SDL_VIDEODRIVER", "SDL_RENDER_DRIVER",
+              "OS_FILTER", "OS_MSAA", "OS_GPURES"):
         env.pop(k, None)
     if renderer == "software":
         env.update(OS_UVRUN="1", SDL_VIDEODRIVER="dummy", SDL_RENDER_DRIVER="software")
