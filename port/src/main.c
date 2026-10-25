@@ -253,18 +253,6 @@ static int      g_ground_colour = -1;   /* TRACK_DATA `color`: the palette index
 #define DRAWDIST_FAR      140000.0f
 static float g_drawdist = DRAWDIST_FAR;
 static float g_far_z;                 /* the far plane's depth; 0 = none */
-/* THE HAZE (the port's, Screamer 2 at ULTRA): faces between these depths go over into the backdrop
-   -- with FILTERING mixed on the card, else a fixed 4 x 4 pattern of their pixels left out, more of
-   them the further (raster_job's and the card's the same); 0 = none */
-static float g_haze_near, g_haze_far;
-static const float g_haze_pattern[16] = {
-    0.5f / 16, 8.5f / 16, 2.5f / 16, 10.5f / 16, 12.5f / 16, 4.5f / 16, 14.5f / 16, 6.5f / 16,
-    3.5f / 16, 11.5f / 16, 1.5f / 16, 9.5f / 16, 15.5f / 16, 7.5f / 16, 13.5f / 16, 5.5f / 16 };
-static inline int haze_gone(float iz, int x, int y)
-{
-    const float h = (1.0f / iz - g_haze_near) / (g_haze_far - g_haze_near);
-    return h > g_haze_pattern[(y & 3) * 4 + (x & 3)];
-}
 static int   g_detail = 3;            /* 0 LOW, 1 MID, 2 HI (the game's three), 3 ULTRA: always 3 (OS_DETAIL, a test) */
 static float g_fog      = 0.0f;   /* OS_FOG=<units>: fade to haze, off by default */
 static int   g_cull     = 1;      /* back-face culling, as the engine does */
@@ -1460,7 +1448,6 @@ static void raster_job(const tri_job *j, int rows, int counted)      /* rows: bi
     const int   plain = !glass && !fogged && flat < 0 && !wraps;
     const uint8_t *const fade = j->fade;
     const int   run = g_uv_run;
-    const float haze_iz = g_haze_far > g_haze_near ? 1.0f / g_haze_near : 0.0f;    /* (nearer than this: none) */
     for (int y = ys; y <= ye; y++) {
         if (!(rows >> (y & 7) & 1)) continue;               /* another lane's row */
         const float py = (float)y + 0.5f;
@@ -1500,7 +1487,6 @@ static void raster_job(const tri_job *j, int rows, int counted)      /* rows: bi
               int16_t *const ip = idb + pi;
               uint8_t *const rp = rkb + pi;
               for (int k_ = 0; k_ < n_; k_++, iz += diz, ui += dui, vi += dvi) {
-                  if (iz < haze_iz && haze_gone(iz, x + k_, y)) continue;
                   union { float f; uint32_t u; } mz, tz;
                   mz.f = iz * zbias;
                   tz.u = zp[k_];
@@ -1530,7 +1516,6 @@ static void raster_job(const tri_job *j, int rows, int counted)      /* rows: bi
           }
           for (int k_ = 0; k_ < n_; k_++, x++, pi++, iz += diz, ui += dui, vi += dvi) {
             int tiewon = 0;
-            if (iz < haze_iz && haze_gone(iz, x, y)) continue;
             if (rank >= 0 && zb[pi] > 0.0f && idb[pi] == id && rkb[pi] > rank) continue;    /* (as above) */
             {
                 /*
@@ -1956,7 +1941,7 @@ static void menu3d_end(void)
     const int own = g_have_smg || !glass;
     const gpu_view v = { FB_W, FB_H, g_vh, g_gpu_rw, g_gpu_rh, g_cy, g_focal_y, g_obj_d2, g_obj_carpet, g_obj_ground,
                          (int)(sizeof g_obj_d2 / sizeof g_obj_d2[0]), own ? g_smg : mix_table(), own ? g_smg_rows : 256, !own,
-                         g_tie_rule, NULL, g_pal, NULL, 0, 0.0f, 0.0f };
+                         g_tie_rule, NULL, g_pal, NULL, 0 };
     g_lay_want = gpu_scene(&v, g_gpu_tri, g_gpu_tri_n, fb, zb, idb);
     g_gpu_tri_n = 0; g_gpu_scene = 0; g_tri_listing = 0;
     g_cull_fx = g_cull_fy = 1.0f;
@@ -2798,7 +2783,7 @@ static void render_scene(const camera *cam, const sky *s)
                   : os_game() == 2 && g_ground_colour >= 0 ? g_ground_colour : pal_near(COL_SKY_FALLBACK);   /* (sky_paint's) */
         const gpu_view v = { FB_W, FB_H, g_vh, g_gpu_rw, g_gpu_rh, g_cy, g_focal_y, g_obj_d2, g_obj_carpet, g_obj_ground,
                              (int)(sizeof g_obj_d2 / sizeof g_obj_d2[0]), g_smg, g_smg_rows, 0, g_tie_rule, &sky, g_pal,
-                             g_fade_on ? g_dpt : NULL, 256, g_haze_near, g_haze_far };
+                             g_fade_on ? g_dpt : NULL, 256 };
         g_lay_want = gpu_scene(&v, g_gpu_tri, g_gpu_tri_n, fb, zb, idb);      /* (shown as the card drew it) */
         g_gpu_tri_n = 0;
         g_gpu_scene = 0;
@@ -11792,16 +11777,13 @@ static int session(int argc, char **argv)
         int td[11];
         snprintf(path_, sizeof path_, "%s/MAP%dDAT.DTR", data, track);
         if (s2_track_data(path_, td)) {
-            /* how far: TRACK_DATA's depth at the top detail, 0.8 of it below (0x2efca).  ULTRA (the
-               port's): 1.2 times as far, the last part going over into the backdrop -- the tracks
-               are made for the game's depth, beyond it far pieces can hang over nothing, the sky
-               under them (Egypt's bridge from the valley before the town, just past 50000) */
+            /* how far: TRACK_DATA's depth at the top detail, 0.8 of it below (0x2efca) -- the game's
+               own always, ULTRA too: its tracks are made for it (beyond it the far pieces hang over
+               nothing, the sky under them: Egypt's bridge from the valley before the town) */
             if (!getenv("OS_DRAWDIST")) {
-                const float depth = (float)(int)((float)-td[0] * (g_detail >= 2 ? 1.0f : 0.8f));
-                g_far_z = g_detail == 3 ? 1.2f * depth : depth;
-                if (g_detail == 3) { g_haze_near = depth; g_haze_far = g_far_z; }
+                g_far_z = (float)(int)((float)-td[0] * (g_detail >= 2 ? 1.0f : 0.8f));
                 g_drawdist = g_far_z * 1.2f > DRAWDIST_ORIGINAL ? g_far_z * 1.2f : DRAWDIST_ORIGINAL;   /* (the port's: pieces looked at) */
-                printf("Screamer 2 track %d: drawn to a depth of %.0f, the haze from %.0f\n", track, g_far_z, g_haze_near);
+                printf("Screamer 2 track %d: drawn to a depth of %.0f\n", track, g_far_z);
             }
             g_ground_colour = g_s2_cond == 0 ? td[4] & 255 : g_s2_cond == 1 ? 0 : 0x13;
             if (!getenv("OS_S2SMGFILE")) { s2_blend_make(td + 5, td + 8); g_have_smg = 1; }   /* (the test switch: the file's table, as before) */

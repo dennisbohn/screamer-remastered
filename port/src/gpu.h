@@ -67,7 +67,6 @@ typedef struct {
     const uint32_t *pal;                    /* M3: the palette fb's numbers are of (the scene's colours) */
     const uint8_t *fade;                    /* Screamer 2: the distance table (night, fog), 256 a row; NULL none */
     int    fade_rows;
-    float  haze_near, haze_far;             /* faces between these depths go over into the backdrop (0: none) */
 } gpu_view;
 
 /* M3: a material: its kind (GPU_KEYED, GLASS, WRAPS), its extent in texels and its frames' first
