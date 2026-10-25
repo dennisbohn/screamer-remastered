@@ -253,6 +253,7 @@ static int      g_ground_colour = -1;   /* TRACK_DATA `color`: the palette index
 #define DRAWDIST_FAR      140000.0f
 static float g_drawdist = DRAWDIST_FAR;
 static float g_far_z;                 /* the far plane's depth; 0 = none */
+static int   g_far_whole;             /* Screamer 2: a face across the far plane is left out whole, not cut */
 static int   g_detail = 3;            /* 0 LOW, 1 MID, 2 HI (the game's three), 3 ULTRA: always 3 (OS_DETAIL, a test) */
 static float g_fog      = 0.0f;   /* OS_FOG=<units>: fade to haze, off by default */
 static int   g_cull     = 1;      /* back-face culling, as the engine does */
@@ -2023,8 +2024,13 @@ static void draw_poly_view(const vtx *in, int n, const material *m, int id)
             o->v = p->v + (q->v - p->v) * t;
         }
     }
-    /* the far plane (0x839af...), when the detail level has one */
-    if (g_far_z > 0.0f && no >= 3) {
+    /* the far plane (0x839af...), when the detail level has one.  Screamer 2 as its 3DFX version
+       draws it (S2_3DFX.EXE, the one GOG starts): a face with a corner beyond it is not there at all
+       -- the faces pop in whole, and the far ends of Egypt's bridge stay unseen from the valley
+       before it, where cut faces showed them */
+    if (g_far_z > 0.0f && no >= 3 && g_far_whole) {
+        for (int k = 0; k < no; k++) if (out[k].z >= g_far_z) return;
+    } else if (g_far_z > 0.0f && no >= 3) {
         vtx cut[12];
         int nc = 0;
         for (int k = 0; k < no; k++) {
@@ -11782,6 +11788,7 @@ static int session(int argc, char **argv)
                nothing, the sky under them: Egypt's bridge from the valley before the town) */
             if (!getenv("OS_DRAWDIST")) {
                 g_far_z = (float)(int)((float)-td[0] * (g_detail >= 2 ? 1.0f : 0.8f));
+                g_far_whole = !getenv("OS_S2FARCUT");     /* (a test: cut as the software version does) */
                 g_drawdist = g_far_z * 1.2f > DRAWDIST_ORIGINAL ? g_far_z * 1.2f : DRAWDIST_ORIGINAL;   /* (the port's: pieces looked at) */
                 printf("Screamer 2 track %d: drawn to a depth of %.0f\n", track, g_far_z);
             }
