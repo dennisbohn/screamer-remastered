@@ -11793,12 +11793,12 @@ static int session(int argc, char **argv)
         snprintf(path_, sizeof path_, "%s/MAP%dDAT.DTR", data, track);
         if (s2_track_data(path_, td)) {
             /* how far: TRACK_DATA's depth at the top detail, 0.8 of it below (0x2efca).  ULTRA (the
-               port's): twice as far, the second half going over into the backdrop -- the tracks are
-               made for the game's depth, beyond it far pieces can hang over nothing, the sky under
-               them (Egypt's bridge from the valley before the town) */
+               port's): 1.2 times as far, the last part going over into the backdrop -- the tracks
+               are made for the game's depth, beyond it far pieces can hang over nothing, the sky
+               under them (Egypt's bridge from the valley before the town, just past 50000) */
             if (!getenv("OS_DRAWDIST")) {
                 const float depth = (float)(int)((float)-td[0] * (g_detail >= 2 ? 1.0f : 0.8f));
-                g_far_z = g_detail == 3 ? 2.0f * depth : depth;
+                g_far_z = g_detail == 3 ? 1.2f * depth : depth;
                 if (g_detail == 3) { g_haze_near = depth; g_haze_far = g_far_z; }
                 g_drawdist = g_far_z * 1.2f > DRAWDIST_ORIGINAL ? g_far_z * 1.2f : DRAWDIST_ORIGINAL;   /* (the port's: pieces looked at) */
                 printf("Screamer 2 track %d: drawn to a depth of %.0f, the haze from %.0f\n", track, g_far_z, g_haze_near);

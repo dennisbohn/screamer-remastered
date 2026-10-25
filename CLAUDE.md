@@ -30,7 +30,7 @@ What changed from OpenScreamer (2026-10-23..24; the details in `docs/GPU.md` and
   `LAY_RUN` -- a new routine that writes into fb must mark its pixels, or the card's scene covers
   them); MSAA shaded once a pixel, keyed edges by alpha to coverage.
 - No DETAIL option: always ULTRA with the H set (`OS_DETAIL` for tests). Screamer 2 is drawn to
-  twice its own depth (TRACK_DATA's), the far half going over into the backdrop (`g_haze_*`; FILTERING
+  1.2 times its own depth (TRACK_DATA's), the last part going over into the backdrop (`g_haze_*`; FILTERING
   mixed on the card, else a 4 x 4 pattern, raster_job's and the card's the same): beyond its depth
   its far pieces can hang over nothing (Egypt).
 - The opponents' drawn tilt eases to the slope's (`opp_tilt_shown`, 0.08 s; the game's jumps from
